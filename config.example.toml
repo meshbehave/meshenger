@@ -1,0 +1,88 @@
+[connection]
+address = "192.168.2.17:4403"
+# reconnect_delay_secs = 5
+
+[bot]
+name = "Meshenger"
+db_path = "meshenger.db"
+# command_prefix = "!"
+# rate_limit_commands = 5        # max commands per window (0 = disabled)
+# rate_limit_window_secs = 60    # window duration in seconds
+
+[welcome]
+enabled = true
+message = "Welcome to the mesh, {name}! Send !help for commands."
+welcome_back_message = "Welcome back, {name}!"
+absence_threshold_hours = 48
+# Optional: only greet these nodes. Omit or leave empty to greet everyone.
+# Accepts hex (!c7d93f4a) or decimal (2719046835) node IDs.
+# whitelist = ["!c7d93f4a", "!5b81e2c6"]
+
+[weather]
+latitude = 25.0330
+longitude = 121.5654
+units = "metric"
+
+[modules.ping]
+enabled = true
+scope = "both"
+
+[modules.nodes]
+enabled = true
+scope = "both"
+
+[modules.weather]
+enabled = true
+scope = "both"
+
+[modules.welcome]
+enabled = true
+scope = "dm"
+
+[modules.mail]
+enabled = true
+scope = "both"
+
+[modules.uptime]
+enabled = true
+scope = "both"
+
+[modules.help]
+enabled = true
+scope = "both"
+
+# ============================================================================
+# BRIDGES - Connect mesh to external platforms
+# ============================================================================
+
+# Telegram Bridge
+# Create a bot via @BotFather on Telegram, get the token.
+# Add the bot to your group, then get the chat_id using:
+#   curl https://api.telegram.org/bot<TOKEN>/getUpdates
+# The chat_id for groups is negative (e.g., -1001234567890)
+#
+# [bridge.telegram]
+# enabled = true
+# bot_token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+# chat_id = -1001234567890
+# mesh_channel = 0              # Meshtastic channel index (0-7). 0 = PRIMARY channel.
+#                                # Listening: 0 forwards from ALL channels; 1-7 forwards only that channel.
+#                                # Sending: always sends to this specific channel.
+# direction = "both"            # "both", "to_telegram", "to_mesh"
+# format = "[{name}] {message}" # {name}, {id}, {message}, {channel}
+
+# Discord Bridge
+# Create a bot at https://discord.com/developers/applications
+# Enable MESSAGE CONTENT INTENT in Bot settings
+# Invite with: https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot&permissions=3072
+# Get channel_id by enabling Developer Mode in Discord, then right-click the channel
+#
+# [bridge.discord]
+# enabled = true
+# bot_token = "MTIzNDU2Nzg5.AbCdEf.GhIjKlMnOpQrStUvWxYz"
+# channel_id = 1234567890123456789
+# mesh_channel = 0                    # Meshtastic channel index (0-7). 0 = PRIMARY channel.
+#                                      # Listening: 0 forwards from ALL channels; 1-7 forwards only that channel.
+#                                      # Sending: always sends to this specific channel.
+# direction = "both"                  # "both", "to_discord", "to_mesh"
+# format = "**{name}**: {message}"    # {name}, {id}, {message}, {channel}
