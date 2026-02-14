@@ -82,11 +82,21 @@ impl RateLimiter {
     }
 }
 
+/// Duration after connect during which NodeInfo events are deferred.
+/// The Meshtastic node dumps all known nodes on connect — dispatching events
+/// immediately would spam greetings. Deferred events are dispatched once after
+/// this period ends.
+const STARTUP_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct Bot {
     config: Arc<Config>,
     db: Arc<Db>,
     registry: Arc<ModuleRegistry>,
     rate_limiter: RateLimiter,
+    /// Tracks when the current connection started (for startup grace period)
+    connected_at: Mutex<Option<Instant>>,
+    /// NodeInfo events deferred during startup grace period
+    deferred_events: Mutex<Vec<MeshEvent>>,
     /// Channel to broadcast mesh messages to bridges
     bridge_tx: Option<MeshMessageSender>,
     /// Channel to receive messages from bridges
@@ -104,6 +114,8 @@ impl Bot {
             db: Arc::new(db),
             registry: Arc::new(registry),
             rate_limiter,
+            connected_at: Mutex::new(None),
+            deferred_events: Mutex::new(Vec::new()),
             bridge_tx: None,
             bridge_rx: None,
         }
@@ -184,6 +196,13 @@ impl Bot {
         router: &mut BotPacketRouter,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         log::info!("Entering event loop...");
+        *self.connected_at.lock().unwrap() = Some(Instant::now());
+        self.deferred_events.lock().unwrap().clear();
+
+        // Timer to dispatch deferred events after the grace period
+        let grace_timer = tokio::time::sleep(STARTUP_GRACE_PERIOD);
+        tokio::pin!(grace_timer);
+        let mut grace_period_done = false;
 
         // Take ownership of bridge_rx if present
         let bridge_rx = match &self.bridge_rx {
@@ -216,16 +235,31 @@ impl Bot {
                             self.handle_bridge_message(my_node_id, msg, &mut api, router).await;
                         }
                     }
+                    // Dispatch deferred events after grace period
+                    _ = &mut grace_timer, if !grace_period_done => {
+                        drop(rx_guard);
+                        grace_period_done = true;
+                        self.dispatch_deferred_events(&mut api, router).await;
+                    }
                 }
             } else {
                 // No bridges, just handle mesh packets
-                match packet_rx.recv().await {
-                    Some(packet) => {
-                        self.process_radio_packet(my_node_id, packet, &mut api, router).await;
+                tokio::select! {
+                    packet = packet_rx.recv() => {
+                        match packet {
+                            Some(packet) => {
+                                self.process_radio_packet(my_node_id, packet, &mut api, router).await;
+                            }
+                            None => {
+                                log::warn!("Packet channel closed, exiting event loop");
+                                return Ok(());
+                            }
+                        }
                     }
-                    None => {
-                        log::warn!("Packet channel closed, exiting event loop");
-                        return Ok(());
+                    // Dispatch deferred events after grace period
+                    _ = &mut grace_timer, if !grace_period_done => {
+                        grace_period_done = true;
+                        self.dispatch_deferred_events(&mut api, router).await;
                     }
                 }
             }
@@ -249,7 +283,7 @@ impl Bot {
                 self.handle_mesh_packet(my_node_id, &mesh_packet, api, router).await;
             }
             from_radio::PayloadVariant::NodeInfo(node_info) => {
-                self.handle_node_info(&node_info, api, router).await;
+                self.handle_node_info(my_node_id, &node_info, api, router).await;
             }
             _ => {}
         }
@@ -440,6 +474,7 @@ impl Bot {
 
     async fn handle_node_info(
         &self,
+        my_node_id: u32,
         node_info: &protobufs::NodeInfo,
         api: &mut meshtastic::api::ConnectedStreamApi,
         router: &mut BotPacketRouter,
@@ -457,37 +492,67 @@ impl Bot {
             short_name
         );
 
-        let event = MeshEvent::NodeDiscovered {
-            node_id,
-            long_name: long_name.clone(),
-            short_name: short_name.clone(),
-        };
+        // Skip dispatching events for our own node
+        if node_id == my_node_id {
+            log::debug!("Skipping event dispatch for own node");
+            // Still upsert and update position below
+        } else {
+            // Skip event dispatch during startup grace period (the Meshtastic node
+            // dumps all known nodes on connect — greeting them all would be spam)
+            let in_grace_period = self
+                .connected_at
+                .lock()
+                .unwrap()
+                .map(|t| t.elapsed() < STARTUP_GRACE_PERIOD)
+                .unwrap_or(false);
 
-        // Dispatch event to all modules
-        for module in self.registry.all() {
-            match module.handle_event(&event, &self.db).await {
-                Ok(Some(responses)) => {
-                    // For event responses, we construct a minimal context
-                    let ctx = MessageContext {
-                        sender_id: node_id,
-                        sender_name: if !long_name.is_empty() {
-                            long_name.clone()
-                        } else {
-                            format!("!{:08x}", node_id)
-                        },
-                        channel: 0,
-                        is_dm: false,
-                        rssi: 0,
-                        snr: 0.0,
-                        hop_count: 0,
-                        hop_limit: 0,
-                        via_mqtt: false,
-                    };
-                    self.send_responses(&ctx, &responses, api, router).await;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    log::error!("Module {} event error: {}", module.name(), e);
+            if in_grace_period {
+                log::debug!(
+                    "Deferring event dispatch for !{:08x} (startup grace period)",
+                    node_id
+                );
+                self.deferred_events.lock().unwrap().push(MeshEvent::NodeDiscovered {
+                    node_id,
+                    long_name: long_name.clone(),
+                    short_name: short_name.clone(),
+                });
+                // Skip upsert/position during grace period so nodes stay "new"
+                // until deferred events are dispatched
+                return;
+            } else {
+                let event = MeshEvent::NodeDiscovered {
+                    node_id,
+                    long_name: long_name.clone(),
+                    short_name: short_name.clone(),
+                };
+
+                // Dispatch event to all modules
+                for module in self.registry.all() {
+                    match module.handle_event(&event, &self.db).await {
+                        Ok(Some(responses)) => {
+                            // For event responses, we construct a minimal context
+                            let ctx = MessageContext {
+                                sender_id: node_id,
+                                sender_name: if !long_name.is_empty() {
+                                    long_name.clone()
+                                } else {
+                                    format!("!{:08x}", node_id)
+                                },
+                                channel: 0,
+                                is_dm: false,
+                                rssi: 0,
+                                snr: 0.0,
+                                hop_count: 0,
+                                hop_limit: 0,
+                                via_mqtt: false,
+                            };
+                            self.send_responses(&ctx, &responses, api, router).await;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            log::error!("Module {} event error: {}", module.name(), e);
+                        }
+                    }
                 }
             }
         }
@@ -505,6 +570,67 @@ impl Bot {
                 let lon = lon_i as f64 * 1e-7;
                 if lat != 0.0 || lon != 0.0 {
                     let _ = self.db.update_position(node_id, lat, lon);
+                }
+            }
+        }
+    }
+
+    async fn dispatch_deferred_events(
+        &self,
+        api: &mut meshtastic::api::ConnectedStreamApi,
+        router: &mut BotPacketRouter,
+    ) {
+        let events: Vec<MeshEvent> = {
+            let mut deferred = self.deferred_events.lock().unwrap();
+            std::mem::take(&mut *deferred)
+        };
+
+        if events.is_empty() {
+            return;
+        }
+
+        log::info!(
+            "Grace period ended, dispatching {} deferred event(s)",
+            events.len()
+        );
+
+        for event in &events {
+            if let MeshEvent::NodeDiscovered {
+                node_id,
+                long_name,
+                short_name,
+            } = event
+            {
+                for module in self.registry.all() {
+                    match module.handle_event(event, &self.db).await {
+                        Ok(Some(responses)) => {
+                            let ctx = MessageContext {
+                                sender_id: *node_id,
+                                sender_name: if !long_name.is_empty() {
+                                    long_name.clone()
+                                } else {
+                                    format!("!{:08x}", node_id)
+                                },
+                                channel: 0,
+                                is_dm: false,
+                                rssi: 0,
+                                snr: 0.0,
+                                hop_count: 0,
+                                hop_limit: 0,
+                                via_mqtt: false,
+                            };
+                            self.send_responses(&ctx, &responses, api, router).await;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            log::error!("Module {} deferred event error: {}", module.name(), e);
+                        }
+                    }
+                }
+
+                // Upsert after module dispatch (was deferred along with the event)
+                if let Err(e) = self.db.upsert_node(*node_id, short_name, long_name) {
+                    log::error!("Failed to upsert deferred node: {}", e);
                 }
             }
         }
