@@ -51,6 +51,35 @@ RUST_LOG=info ./target/release/meshenger     # normal
 RUST_LOG=debug ./target/release/meshenger    # verbose
 ```
 
+## Run With Docker Compose
+
+1. Create your config file:
+
+```sh
+cp config.example.toml config.toml
+# Edit config.toml (especially [connection].address)
+```
+
+2. Start the container:
+
+```sh
+docker compose up -d --build
+```
+
+3. Follow logs:
+
+```sh
+docker compose logs -f meshenger
+```
+
+Notes:
+- The container runs as a non-root user (`meshenger`).
+- Container user/group IDs are set from host `UID/GID` (fallback `1000:1000`) at build time.
+- `config.toml` is mounted read-only at `/config/config.toml`.
+- A host bind mount (`./data`) is mounted at `/data` for easy backup.
+- With default `db_path = "meshenger.db"`, the SQLite DB is stored in `/data/meshenger.db`.
+- Docker logs are capped at 100MB per container (`json-file` driver, `max-size=100m`).
+
 ## Configuration
 
 Everything lives in `config.toml`. See [`config.example.toml`](config.example.toml) for all options with comments.

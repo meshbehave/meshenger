@@ -1,0 +1,6 @@
+.git
+.gitignore
+target
+meshenger.db
+config.toml
+docker-compose.yaml
