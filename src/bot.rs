@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -15,6 +15,19 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::message::{Destination, MeshEvent, MessageContext, Response};
 use crate::module::ModuleRegistry;
+
+#[derive(Debug, Clone)]
+struct OutgoingMeshMessage {
+    text: String,
+    destination: PacketDestination,
+    channel: MeshChannel,
+    /// Bot's own node ID (for DB logging as sender)
+    from_node: u32,
+    /// Target node ID for DB logging (None = broadcast)
+    to_node: Option<u32>,
+    /// Meshtastic channel index for DB logging
+    mesh_channel: u32,
+}
 
 const MAX_MESSAGE_LEN: usize = 220;
 
@@ -101,6 +114,8 @@ pub struct Bot {
     bridge_tx: Option<MeshMessageSender>,
     /// Channel to receive messages from bridges
     bridge_rx: Option<tokio::sync::Mutex<OutgoingMessageReceiver>>,
+    /// Outgoing message queue drained by the event loop timer
+    outgoing_queue: Mutex<VecDeque<OutgoingMeshMessage>>,
 }
 
 impl Bot {
@@ -118,6 +133,7 @@ impl Bot {
             deferred_events: Mutex::new(Vec::new()),
             bridge_tx: None,
             bridge_rx: None,
+            outgoing_queue: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -130,6 +146,46 @@ impl Bot {
         self.bridge_tx = Some(bridge_tx);
         self.bridge_rx = Some(tokio::sync::Mutex::new(bridge_rx));
         self
+    }
+
+    fn queue_message(&self, msg: OutgoingMeshMessage) {
+        self.outgoing_queue.lock().unwrap().push_back(msg);
+    }
+
+    fn queue_responses(&self, ctx: &MessageContext, responses: &[Response], my_node_id: u32) {
+        for response in responses {
+            let destination = match &response.destination {
+                Destination::Sender => PacketDestination::Node(NodeId::from(ctx.sender_id)),
+                Destination::Broadcast => PacketDestination::Broadcast,
+                Destination::Node(id) => PacketDestination::Node(NodeId::from(*id)),
+            };
+
+            let channel = match MeshChannel::new(response.channel) {
+                Ok(ch) => ch,
+                Err(e) => {
+                    log::error!("Invalid channel {}: {}", response.channel, e);
+                    continue;
+                }
+            };
+
+            let to_node = match &response.destination {
+                Destination::Sender => Some(ctx.sender_id),
+                Destination::Node(id) => Some(*id),
+                Destination::Broadcast => None,
+            };
+
+            let chunks = chunk_message(&response.text);
+            for chunk in chunks {
+                self.queue_message(OutgoingMeshMessage {
+                    text: chunk,
+                    destination,
+                    channel,
+                    from_node: my_node_id,
+                    to_node,
+                    mesh_channel: response.channel,
+                });
+            }
+        }
     }
 
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -204,6 +260,11 @@ impl Bot {
         tokio::pin!(grace_timer);
         let mut grace_period_done = false;
 
+        // Timer for draining the outgoing message queue
+        let send_delay = std::time::Duration::from_millis(self.config.bot.send_delay_ms);
+        let send_timer = tokio::time::sleep(send_delay);
+        tokio::pin!(send_timer);
+
         // Take ownership of bridge_rx if present
         let bridge_rx = match &self.bridge_rx {
             Some(rx) => Some(rx),
@@ -211,6 +272,9 @@ impl Bot {
         };
 
         loop {
+            // Check if the outgoing queue has messages to send
+            let queue_has_messages = !self.outgoing_queue.lock().unwrap().is_empty();
+
             // If we have a bridge receiver, use select to handle both
             if let Some(rx_mutex) = &bridge_rx {
                 let mut rx_guard = rx_mutex.lock().await;
@@ -220,7 +284,7 @@ impl Bot {
                         match packet {
                             Some(p) => {
                                 drop(rx_guard); // Release lock before processing
-                                self.process_radio_packet(my_node_id, p, &mut api, router).await;
+                                self.process_radio_packet(my_node_id, p).await;
                             }
                             None => {
                                 log::warn!("Packet channel closed, exiting event loop");
@@ -232,14 +296,20 @@ impl Bot {
                     bridge_msg = rx_guard.recv() => {
                         if let Some(msg) = bridge_msg {
                             drop(rx_guard); // Release lock before processing
-                            self.handle_bridge_message(my_node_id, msg, &mut api, router).await;
+                            self.handle_bridge_message(my_node_id, msg);
                         }
                     }
                     // Dispatch deferred events after grace period
                     _ = &mut grace_timer, if !grace_period_done => {
                         drop(rx_guard);
                         grace_period_done = true;
-                        self.dispatch_deferred_events(&mut api, router).await;
+                        self.dispatch_deferred_events(my_node_id).await;
+                    }
+                    // Drain outgoing queue
+                    _ = &mut send_timer, if queue_has_messages => {
+                        drop(rx_guard);
+                        self.send_next_queued_message(&mut api, router).await;
+                        send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
                 }
             } else {
@@ -248,7 +318,7 @@ impl Bot {
                     packet = packet_rx.recv() => {
                         match packet {
                             Some(packet) => {
-                                self.process_radio_packet(my_node_id, packet, &mut api, router).await;
+                                self.process_radio_packet(my_node_id, packet).await;
                             }
                             None => {
                                 log::warn!("Packet channel closed, exiting event loop");
@@ -259,10 +329,51 @@ impl Bot {
                     // Dispatch deferred events after grace period
                     _ = &mut grace_timer, if !grace_period_done => {
                         grace_period_done = true;
-                        self.dispatch_deferred_events(&mut api, router).await;
+                        self.dispatch_deferred_events(my_node_id).await;
+                    }
+                    // Drain outgoing queue
+                    _ = &mut send_timer, if queue_has_messages => {
+                        self.send_next_queued_message(&mut api, router).await;
+                        send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
                 }
             }
+        }
+    }
+
+    /// Pop and send the next message from the outgoing queue.
+    async fn send_next_queued_message(
+        &self,
+        api: &mut meshtastic::api::ConnectedStreamApi,
+        router: &mut BotPacketRouter,
+    ) {
+        let msg = match self.outgoing_queue.lock().unwrap().pop_front() {
+            Some(m) => m,
+            None => return,
+        };
+
+        log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
+
+        // Log outgoing message
+        let _ = self.db.log_message(
+            msg.from_node,
+            msg.to_node,
+            msg.mesh_channel,
+            &msg.text,
+            "out",
+        );
+
+        if let Err(e) = api
+            .send_text(
+                router,
+                msg.text,
+                msg.destination,
+                true,
+                msg.channel,
+            )
+            .await
+        {
+            log::error!("Failed to send queued message: {}", e);
         }
     }
 
@@ -270,8 +381,6 @@ impl Bot {
         &self,
         my_node_id: u32,
         packet: protobufs::FromRadio,
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
     ) {
         let variant = match packet.payload_variant {
             Some(v) => v,
@@ -280,22 +389,20 @@ impl Bot {
 
         match variant {
             from_radio::PayloadVariant::Packet(mesh_packet) => {
-                self.handle_mesh_packet(my_node_id, &mesh_packet, api, router).await;
+                self.handle_mesh_packet(my_node_id, &mesh_packet).await;
             }
             from_radio::PayloadVariant::NodeInfo(node_info) => {
-                self.handle_node_info(my_node_id, &node_info, api, router).await;
+                self.handle_node_info(my_node_id, &node_info).await;
             }
             _ => {}
         }
     }
 
     /// Handle a message from an external bridge (Telegram, Discord, etc.)
-    async fn handle_bridge_message(
+    fn handle_bridge_message(
         &self,
         my_node_id: u32,
         msg: OutgoingBridgeMessage,
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
     ) {
         log::info!("Bridge message from {}: {}", msg.source, msg.text);
 
@@ -307,36 +414,20 @@ impl Bot {
             }
         };
 
-        // Log outgoing message
-        let _ = self.db.log_message(
-            my_node_id,
-            None, // broadcast
-            msg.channel,
-            &msg.text,
-            "out",
-        );
-
-        // Send to mesh as broadcast
-        if let Err(e) = api
-            .send_text(
-                router,
-                msg.text.clone(),
-                PacketDestination::Broadcast,
-                true,
-                channel,
-            )
-            .await
-        {
-            log::error!("Failed to send bridge message to mesh: {}", e);
-        }
+        self.queue_message(OutgoingMeshMessage {
+            text: msg.text,
+            destination: PacketDestination::Broadcast,
+            channel,
+            from_node: my_node_id,
+            to_node: None,
+            mesh_channel: msg.channel,
+        });
     }
 
     async fn handle_mesh_packet(
         &self,
         my_node_id: u32,
         mesh_packet: &protobufs::MeshPacket,
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
     ) {
         let data = match &mesh_packet.payload_variant {
             Some(mesh_packet::PayloadVariant::Decoded(data)) => data,
@@ -448,7 +539,7 @@ impl Bot {
                 destination: Destination::Sender,
                 channel: ctx.channel,
             }];
-            self.send_responses(&ctx, &responses, api, router).await;
+            self.queue_responses(&ctx, &responses, my_node_id);
             return;
         }
 
@@ -463,7 +554,7 @@ impl Bot {
 
         match module.handle_command(command, args, &ctx, &self.db).await {
             Ok(Some(responses)) => {
-                self.send_responses(&ctx, &responses, api, router).await;
+                self.queue_responses(&ctx, &responses, my_node_id);
             }
             Ok(None) => {}
             Err(e) => {
@@ -476,8 +567,6 @@ impl Bot {
         &self,
         my_node_id: u32,
         node_info: &protobufs::NodeInfo,
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
     ) {
         let node_id = node_info.num;
         let (long_name, short_name) = match &node_info.user {
@@ -526,34 +615,8 @@ impl Bot {
                     short_name: short_name.clone(),
                 };
 
-                // Dispatch event to all modules
-                for module in self.registry.all() {
-                    match module.handle_event(&event, &self.db).await {
-                        Ok(Some(responses)) => {
-                            // For event responses, we construct a minimal context
-                            let ctx = MessageContext {
-                                sender_id: node_id,
-                                sender_name: if !long_name.is_empty() {
-                                    long_name.clone()
-                                } else {
-                                    format!("!{:08x}", node_id)
-                                },
-                                channel: 0,
-                                is_dm: false,
-                                rssi: 0,
-                                snr: 0.0,
-                                hop_count: 0,
-                                hop_limit: 0,
-                                via_mqtt: false,
-                            };
-                            self.send_responses(&ctx, &responses, api, router).await;
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            log::error!("Module {} event error: {}", module.name(), e);
-                        }
-                    }
-                }
+                // Dispatch event to all modules, queuing any responses
+                self.dispatch_event_to_modules(&event, my_node_id).await;
             }
         }
 
@@ -577,8 +640,7 @@ impl Bot {
 
     async fn dispatch_deferred_events(
         &self,
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
+        my_node_id: u32,
     ) {
         let events: Vec<MeshEvent> = {
             let mut deferred = self.deferred_events.lock().unwrap();
@@ -601,36 +663,46 @@ impl Bot {
                 short_name,
             } = event
             {
-                for module in self.registry.all() {
-                    match module.handle_event(event, &self.db).await {
-                        Ok(Some(responses)) => {
-                            let ctx = MessageContext {
-                                sender_id: *node_id,
-                                sender_name: if !long_name.is_empty() {
-                                    long_name.clone()
-                                } else {
-                                    format!("!{:08x}", node_id)
-                                },
-                                channel: 0,
-                                is_dm: false,
-                                rssi: 0,
-                                snr: 0.0,
-                                hop_count: 0,
-                                hop_limit: 0,
-                                via_mqtt: false,
-                            };
-                            self.send_responses(&ctx, &responses, api, router).await;
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            log::error!("Module {} deferred event error: {}", module.name(), e);
-                        }
-                    }
-                }
+                self.dispatch_event_to_modules(event, my_node_id).await;
 
                 // Upsert after module dispatch (was deferred along with the event)
                 if let Err(e) = self.db.upsert_node(*node_id, short_name, long_name) {
                     log::error!("Failed to upsert deferred node: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Dispatch an event to all modules, queuing any responses.
+    async fn dispatch_event_to_modules(&self, event: &MeshEvent, my_node_id: u32) {
+        let (node_id, long_name) = match event {
+            MeshEvent::NodeDiscovered { node_id, long_name, .. } => (*node_id, long_name.clone()),
+            MeshEvent::PositionUpdate { node_id, .. } => (*node_id, String::new()),
+        };
+
+        for module in self.registry.all() {
+            match module.handle_event(event, &self.db).await {
+                Ok(Some(responses)) => {
+                    let ctx = MessageContext {
+                        sender_id: node_id,
+                        sender_name: if !long_name.is_empty() {
+                            long_name.clone()
+                        } else {
+                            format!("!{:08x}", node_id)
+                        },
+                        channel: 0,
+                        is_dm: false,
+                        rssi: 0,
+                        snr: 0.0,
+                        hop_count: 0,
+                        hop_limit: 0,
+                        via_mqtt: false,
+                    };
+                    self.queue_responses(&ctx, &responses, my_node_id);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    log::error!("Module {} event error: {}", module.name(), e);
                 }
             }
         }
@@ -657,66 +729,6 @@ impl Bot {
         }
     }
 
-    async fn send_responses(
-        &self,
-        ctx: &MessageContext,
-        responses: &[Response],
-        api: &mut meshtastic::api::ConnectedStreamApi,
-        router: &mut BotPacketRouter,
-    ) {
-        for response in responses {
-            let destination = match &response.destination {
-                Destination::Sender => PacketDestination::Node(NodeId::from(ctx.sender_id)),
-                Destination::Broadcast => PacketDestination::Broadcast,
-                Destination::Node(id) => PacketDestination::Node(NodeId::from(*id)),
-            };
-
-            let channel = match MeshChannel::new(response.channel) {
-                Ok(ch) => ch,
-                Err(e) => {
-                    log::error!("Invalid channel {}: {}", response.channel, e);
-                    continue;
-                }
-            };
-
-            let chunks = chunk_message(&response.text);
-            for chunk in &chunks {
-                log::info!("Sending: {:?} -> {:?}", chunk, destination);
-
-                // Log outgoing message
-                let to_node = match &response.destination {
-                    Destination::Sender => Some(ctx.sender_id),
-                    Destination::Node(id) => Some(*id),
-                    Destination::Broadcast => None,
-                };
-                let _ = self.db.log_message(
-                    router.node_id,
-                    to_node,
-                    response.channel,
-                    chunk,
-                    "out",
-                );
-
-                if let Err(e) = api
-                    .send_text(
-                        router,
-                        chunk.clone(),
-                        destination.clone(),
-                        true,
-                        channel.clone(),
-                    )
-                    .await
-                {
-                    log::error!("Failed to send message: {}", e);
-                }
-
-                // Small delay between chunks to avoid flooding
-                if chunks.len() > 1 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
-            }
-        }
-    }
 }
 
 fn chunk_message(text: &str) -> Vec<String> {
@@ -761,4 +773,199 @@ fn chunk_message(text: &str) -> Vec<String> {
     }
 
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::*;
+    use crate::module::ModuleRegistry;
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    fn test_config() -> Config {
+        Config {
+            connection: ConnectionConfig {
+                address: "127.0.0.1:4403".to_string(),
+                reconnect_delay_secs: 5,
+            },
+            bot: BotConfig {
+                name: "TestBot".to_string(),
+                db_path: ":memory:".to_string(),
+                command_prefix: "!".to_string(),
+                rate_limit_commands: 0,
+                rate_limit_window_secs: 60,
+                send_delay_ms: 1500,
+            },
+            welcome: WelcomeConfig {
+                enabled: false,
+                message: String::new(),
+                welcome_back_message: String::new(),
+                absence_threshold_hours: 48,
+                whitelist: Vec::new(),
+            },
+            weather: WeatherConfig {
+                latitude: 0.0,
+                longitude: 0.0,
+                units: "metric".to_string(),
+            },
+            modules: HashMap::new(),
+            bridge: BridgeConfig::default(),
+        }
+    }
+
+    fn test_bot() -> Bot {
+        let config = test_config();
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let registry = ModuleRegistry::new();
+        Bot::new(config, db, registry)
+    }
+
+    fn test_ctx(sender_id: u32, channel: u32) -> MessageContext {
+        MessageContext {
+            sender_id,
+            sender_name: format!("!{:08x}", sender_id),
+            channel,
+            is_dm: false,
+            rssi: 0,
+            snr: 0.0,
+            hop_count: 0,
+            hop_limit: 0,
+            via_mqtt: false,
+        }
+    }
+
+    #[test]
+    fn test_queue_message_ordering() {
+        let bot = test_bot();
+        let my_node_id = 1;
+
+        for i in 0..5 {
+            bot.queue_message(OutgoingMeshMessage {
+                text: format!("msg{}", i),
+                destination: PacketDestination::Broadcast,
+                channel: MeshChannel::new(0).unwrap(),
+                from_node: my_node_id,
+                to_node: None,
+                mesh_channel: 0,
+            });
+        }
+
+        let mut queue = bot.outgoing_queue.lock().unwrap();
+        assert_eq!(queue.len(), 5);
+        for i in 0..5 {
+            let msg = queue.pop_front().unwrap();
+            assert_eq!(msg.text, format!("msg{}", i));
+        }
+        assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn test_queue_responses_chunking() {
+        let bot = test_bot();
+        let ctx = test_ctx(0xAABBCCDD, 0);
+        let my_node_id = 1;
+
+        // Create a response longer than MAX_MESSAGE_LEN (220)
+        let long_text = "a".repeat(500);
+        let responses = vec![Response {
+            text: long_text.clone(),
+            destination: Destination::Sender,
+            channel: 0,
+        }];
+
+        bot.queue_responses(&ctx, &responses, my_node_id);
+
+        let queue = bot.outgoing_queue.lock().unwrap();
+        assert!(queue.len() > 1, "Long message should be chunked into multiple queue entries");
+
+        // Verify all chunks are within the limit
+        for msg in queue.iter() {
+            assert!(msg.text.len() <= MAX_MESSAGE_LEN);
+        }
+
+        // Verify total content is preserved
+        let reassembled: String = queue.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(reassembled, long_text);
+    }
+
+    #[test]
+    fn test_queue_responses_preserves_destination() {
+        let bot = test_bot();
+        let ctx = test_ctx(0x12345678, 3);
+        let my_node_id = 1;
+
+        let responses = vec![
+            Response {
+                text: "to sender".to_string(),
+                destination: Destination::Sender,
+                channel: 3,
+            },
+            Response {
+                text: "broadcast".to_string(),
+                destination: Destination::Broadcast,
+                channel: 0,
+            },
+            Response {
+                text: "to node".to_string(),
+                destination: Destination::Node(0xDEADBEEF),
+                channel: 1,
+            },
+        ];
+
+        bot.queue_responses(&ctx, &responses, my_node_id);
+
+        let queue = bot.outgoing_queue.lock().unwrap();
+        assert_eq!(queue.len(), 3);
+
+        // Sender -> Node(sender_id)
+        assert!(matches!(queue[0].destination, PacketDestination::Node(_)));
+        assert_eq!(queue[0].to_node, Some(0x12345678));
+        assert_eq!(queue[0].mesh_channel, 3);
+
+        // Broadcast
+        assert!(matches!(queue[1].destination, PacketDestination::Broadcast));
+        assert_eq!(queue[1].to_node, None);
+        assert_eq!(queue[1].mesh_channel, 0);
+
+        // Node(specific)
+        assert!(matches!(queue[2].destination, PacketDestination::Node(_)));
+        assert_eq!(queue[2].to_node, Some(0xDEADBEEF));
+        assert_eq!(queue[2].mesh_channel, 1);
+    }
+
+    #[test]
+    fn test_queue_message_from_bridge() {
+        let bot = test_bot();
+        let my_node_id = 1;
+
+        let msg = OutgoingBridgeMessage {
+            text: "[TG:alice] Hello mesh!".to_string(),
+            channel: 2,
+            source: "telegram".to_string(),
+        };
+
+        bot.handle_bridge_message(my_node_id, msg);
+
+        let queue = bot.outgoing_queue.lock().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].text, "[TG:alice] Hello mesh!");
+        assert!(matches!(queue[0].destination, PacketDestination::Broadcast));
+        assert_eq!(queue[0].mesh_channel, 2);
+        assert_eq!(queue[0].from_node, my_node_id);
+        assert_eq!(queue[0].to_node, None);
+    }
+
+    #[test]
+    fn test_queue_empty_response_not_enqueued() {
+        let bot = test_bot();
+        let ctx = test_ctx(0x12345678, 0);
+        let my_node_id = 1;
+
+        // Empty response list
+        bot.queue_responses(&ctx, &[], my_node_id);
+
+        let queue = bot.outgoing_queue.lock().unwrap();
+        assert!(queue.is_empty());
+    }
 }

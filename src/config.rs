@@ -82,6 +82,8 @@ pub struct BotConfig {
     pub rate_limit_commands: usize,
     #[serde(default = "default_rate_limit_window")]
     pub rate_limit_window_secs: u64,
+    #[serde(default = "default_send_delay_ms")]
+    pub send_delay_ms: u64,
 }
 
 fn default_rate_limit_commands() -> usize {
@@ -90,6 +92,10 @@ fn default_rate_limit_commands() -> usize {
 
 fn default_rate_limit_window() -> u64 {
     60
+}
+
+fn default_send_delay_ms() -> u64 {
+    1500
 }
 
 fn default_command_prefix() -> String {

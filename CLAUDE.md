@@ -53,6 +53,19 @@ Bridges connect the mesh to external platforms (Telegram via `teloxide`, Discord
 
 Echo prevention: bridge-originated messages are prefixed with source tags (`[TG:username]`, `[DC:username]`) so they aren't re-forwarded. Each bridge has its own `BridgeDirection` enum controlling forwarding directionality.
 
+### Outgoing Message Queue
+
+All outgoing mesh messages go through a `VecDeque<OutgoingMeshMessage>` queue in `Bot`, drained by a timer branch in the `tokio::select!` event loop. This prevents radio flooding when many messages are generated at once (e.g., deferred welcome greetings after the startup grace period).
+
+Key components:
+- **`OutgoingMeshMessage`** — struct holding text, destination, channel, and DB logging fields
+- **`queue_message()`** — pushes a single message onto the queue
+- **`queue_responses()`** — converts `Response` objects into queued messages (with chunking for long text)
+- **`send_next_queued_message()`** — pops front message, calls `api.send_text()`, logs to DB
+- **`send_delay_ms`** config option (default 1500ms) — minimum delay between consecutive transmissions
+
+Messages from all sources (command responses, event responses, bridge messages) flow through the queue. Only `send_next_queued_message()` touches `api`/`router`, keeping them out of the rest of the codebase.
+
 ### Error Handling
 
 Use `Box<dyn std::error::Error + Send + Sync>` for all async error types. The `RouterError` struct in `bot.rs` exists solely because the `PacketRouter` trait requires `E: std::error::Error`.
@@ -86,3 +99,11 @@ TOML format (`config.toml`, gitignored). All settings have defaults via `#[serde
 - **"incomplete packet" errors**: Benign, suppressed via log filter
 - **Connection refused**: Check TCP address in config, ensure node is accessible on port 4403
 - **Rate limited**: Check `rate_limit_commands` setting (0 = disabled)
+
+## Known Issues
+
+### Text messages delayed during startup
+
+When the bot connects, the Meshtastic node dumps all known NodeInfo packets over TCP before delivering any queued text messages. During the 30-second startup grace period, text messages sent by other nodes over radio are buffered behind this NodeInfo flood in the TCP stream. They arrive at the bot only after the dump completes, typically appearing as a burst all at the same timestamp.
+
+This is a Meshtastic firmware/TCP behavior, not a bot bug. The bot code handles text messages at any time — there is no grace period check in `handle_mesh_packet`. The delay is purely at the TCP transport layer.

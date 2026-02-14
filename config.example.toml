@@ -8,6 +8,7 @@ db_path = "meshenger.db"
 # command_prefix = "!"
 # rate_limit_commands = 5        # max commands per window (0 = disabled)
 # rate_limit_window_secs = 60    # window duration in seconds
+# send_delay_ms = 1500           # delay between outgoing mesh messages in ms
 
 [welcome]
 enabled = true
