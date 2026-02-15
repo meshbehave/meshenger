@@ -67,21 +67,19 @@ pub struct TelegramBridge {
     bot: Bot,
 }
 
+fn render_mesh_message(format: &str, msg: &MeshBridgeMessage) -> String {
+    format
+        .replace("{name}", &msg.sender_name)
+        .replace("{id}", &format!("!{:08x}", msg.sender_id))
+        .replace("{message}", &msg.text)
+        .replace("{channel}", &msg.channel.to_string())
+}
+
 impl TelegramBridge {
     /// Create a new Telegram bridge with the given configuration.
     pub fn new(config: TelegramBridgeConfig) -> Self {
         let bot = Bot::new(&config.bot_token);
         Self { config, bot }
-    }
-
-    /// Format a mesh message for Telegram.
-    fn format_mesh_message(&self, msg: &MeshBridgeMessage) -> String {
-        self.config
-            .format
-            .replace("{name}", &msg.sender_name)
-            .replace("{id}", &format!("!{:08x}", msg.sender_id))
-            .replace("{message}", &msg.text)
-            .replace("{channel}", &msg.channel.to_string())
     }
 
     /// Run the Telegram bridge.
@@ -147,15 +145,7 @@ impl TelegramBridge {
                         continue;
                     }
 
-                    let text = format!(
-                        "{}",
-                        config
-                            .format
-                            .replace("{name}", &msg.sender_name)
-                            .replace("{id}", &format!("!{:08x}", msg.sender_id))
-                            .replace("{message}", &msg.text)
-                            .replace("{channel}", &msg.channel.to_string())
-                    );
+                    let text = render_mesh_message(&config.format, &msg);
 
                     log::debug!("Forwarding to Telegram: {}", text);
 
@@ -289,12 +279,6 @@ mod tests {
 
     #[test]
     fn test_format_mesh_message() {
-        let config = TelegramBridgeConfig {
-            format: "[{name}] {message}".to_string(),
-            ..Default::default()
-        };
-        let bridge = TelegramBridge::new(config);
-
         let msg = MeshBridgeMessage {
             sender_id: 0xaabbccdd,
             sender_name: "Alice".to_string(),
@@ -303,17 +287,14 @@ mod tests {
             is_dm: false,
         };
 
-        assert_eq!(bridge.format_mesh_message(&msg), "[Alice] Hello world");
+        assert_eq!(
+            render_mesh_message("[{name}] {message}", &msg),
+            "[Alice] Hello world"
+        );
     }
 
     #[test]
     fn test_format_mesh_message_with_id() {
-        let config = TelegramBridgeConfig {
-            format: "{id} ({name}): {message}".to_string(),
-            ..Default::default()
-        };
-        let bridge = TelegramBridge::new(config);
-
         let msg = MeshBridgeMessage {
             sender_id: 0x12345678,
             sender_name: "Bob".to_string(),
@@ -323,7 +304,7 @@ mod tests {
         };
 
         assert_eq!(
-            bridge.format_mesh_message(&msg),
+            render_mesh_message("{id} ({name}): {message}", &msg),
             "!12345678 (Bob): Test"
         );
     }

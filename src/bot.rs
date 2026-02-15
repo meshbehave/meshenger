@@ -367,7 +367,16 @@ impl Bot {
         };
         self.queue_depth.fetch_sub(1, Ordering::Relaxed);
 
-        log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
+        if let Some(reply_to_msg_id) = msg.reply_id {
+            log::info!(
+                "Sending queued reply [reply_to_msg_id={}]: {:?} -> {:?}",
+                reply_to_msg_id,
+                msg.text,
+                msg.destination
+            );
+        } else {
+            log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
+        }
 
         // Log outgoing message (no RF metadata for outgoing)
         let _ = self.db.log_packet(
@@ -404,7 +413,15 @@ impl Bot {
                 .await
         };
         if let Err(e) = result {
-            log::error!("Failed to send queued message: {}", e);
+            if let Some(reply_to_msg_id) = msg.reply_id {
+                log::error!(
+                    "Failed to send queued reply [reply_to_msg_id={}]: {}",
+                    reply_to_msg_id,
+                    e
+                );
+            } else {
+                log::error!("Failed to send queued message: {}", e);
+            }
         }
     }
 
@@ -491,7 +508,13 @@ impl Bot {
                         let lat = lat_i as f64 * 1e-7;
                         let lon = lon_i as f64 * 1e-7;
                         if lat != 0.0 || lon != 0.0 {
-                            log::debug!("Position from !{:08x}: {:.4}, {:.4}", mesh_packet.from, lat, lon);
+                            log::debug!(
+                                "Position from !{:08x} [msg_id={}]: {:.4}, {:.4}",
+                                mesh_packet.from,
+                                mesh_packet.id,
+                                lat,
+                                lon
+                            );
                             let _ = self.db.update_position(mesh_packet.from, lat, lon);
                         }
                     }
@@ -571,9 +594,10 @@ impl Bot {
         };
 
         log::info!(
-            "Text from {} ({}): {}",
+            "Text from {} ({}) [msg_id={}]: {}",
             ctx.sender_name,
             if is_dm { "DM" } else { "public" },
+            ctx.packet_id,
             text.trim()
         );
 
@@ -604,7 +628,7 @@ impl Bot {
                 };
                 // Don't block on send, just log if it fails
                 if tx.send(bridge_msg).is_err() {
-                    log::debug!("No bridge receivers listening");
+                    log::debug!("No bridge receivers listening [msg_id={}]", ctx.packet_id);
                 }
             }
         }
