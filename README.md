@@ -2,7 +2,7 @@
 
 Your mesh network's personal messenger, butler, and weatherman — all rolled into one tiny Rust bot.
 
-Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and hangs out on your mesh network, greeting newcomers, answering commands, holding mail for offline users, and bridging conversations to Telegram and Discord.
+Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and hangs out on your mesh network, greeting newcomers, answering commands, and bridging conversations to Telegram and Discord.
 
 ## What It Does
 
@@ -15,10 +15,6 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 | `!ping` | Signal quality report (RSSI, SNR, hop count, MQTT indicator) |
 | `!nodes [count]` | List recently seen nodes (default 5, max 20) |
 | `!weather` | Current weather — uses your GPS position if known, otherwise a default location |
-| `!mail send <user> <msg>` | Leave a message for an offline user |
-| `!mail read` | Read your unread mail |
-| `!mail list` | Check unread mail count |
-| `!mail delete <id>` | Delete a mail message |
 | `!uptime` | Bot uptime and message stats |
 | `!help` | List available commands |
 
@@ -29,8 +25,6 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 **Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, node table/map with MQTT/RF badges and per-node hop summary (last/avg/min), configurable time ranges (1d to 1y), and MQTT filtering.
 
 **Optional auto traceroute probe** — Can periodically send a low-frequency traceroute to recently-seen RF nodes that still lack hop metadata, reusing the bot's existing outgoing queue and pacing.
-
-**Holds mail** — Mesh nodes come and go. Meshenger stores messages for offline users and notifies them when they reconnect. Recipients can be specified by hex node ID (`!ebb0a1ce`), decimal ID, or name.
 
 ## Quick Start
 

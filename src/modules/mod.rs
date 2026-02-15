@@ -1,5 +1,4 @@
 mod help;
-mod mail;
 mod node_info;
 mod ping;
 mod uptime;
@@ -32,9 +31,6 @@ pub fn build_registry(config: &Config) -> ModuleRegistry {
             config.welcome.absence_threshold_hours,
             config.welcome.whitelist.clone(),
         )));
-    }
-    if config.is_module_enabled("mail") {
-        registry.register(Box::new(mail::MailModule));
     }
     if config.is_module_enabled("uptime") {
         registry.register(Box::new(uptime::UptimeModule::new()));

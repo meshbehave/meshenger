@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Meshenger is a modular Meshtastic mesh bot written in Rust. It connects to a Meshtastic node via TCP and provides automated services (welcome greetings, commands, store-and-forward mail, platform bridges) to mesh users.
+Meshenger is a modular Meshtastic mesh bot written in Rust. It connects to a Meshtastic node via TCP and provides automated services (welcome greetings, commands, platform bridges) to mesh users.
 
 ## Build & Test Commands
 
@@ -108,7 +108,7 @@ Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket 
 
 ### Database
 
-SQLite via `rusqlite` with bundled SQLite. Three tables: `nodes`, `packets`, `mail`. All access through the `Db` struct in `db.rs`. Use in-memory SQLite (`:memory:`) for tests.
+SQLite via `rusqlite` with bundled SQLite. Core runtime tables are `nodes` and `packets`. All access goes through the `Db` struct in `db.rs`. Use in-memory SQLite (`:memory:`) for tests.
 
 The `packets` table includes a `packet_type` column (`text`, `position`, `telemetry`, `nodeinfo`, `traceroute`, `neighborinfo`, `routing`, `other`) and RF metadata columns (`via_mqtt`, `rssi`, `snr`, `hop_count`, `hop_start`). All packet types from the Meshtastic node are logged, not just text messages. `log_packet()` accepts these fields — outgoing messages pass `"text"`/`false`/`None`.
 

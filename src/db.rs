@@ -86,14 +86,6 @@ pub struct Node {
     pub last_welcomed: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
-pub struct MailMessage {
-    pub id: i64,
-    pub timestamp: i64,
-    pub from_node: u32,
-    pub body: String,
-}
-
 impl Db {
     pub fn open(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let conn = Connection::open(path)?;
@@ -376,74 +368,6 @@ impl Db {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
-    }
-
-    pub fn store_mail(
-        &self,
-        from_node: u32,
-        to_node: u32,
-        body: &str,
-    ) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let now = Utc::now().timestamp();
-        conn.execute(
-            "INSERT INTO mail (timestamp, from_node, to_node, body) VALUES (?1, ?2, ?3, ?4)",
-            params![now, from_node as i64, to_node as i64, body],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    pub fn get_unread_mail(&self, node_id: u32) -> Result<Vec<MailMessage>, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT id, timestamp, from_node, body FROM mail WHERE to_node = ?1 AND read = 0 ORDER BY timestamp ASC",
-        )?;
-        let mail = stmt
-            .query_map(params![node_id as i64], |row| {
-                Ok(MailMessage {
-                    id: row.get(0)?,
-                    timestamp: row.get(1)?,
-                    from_node: row.get::<_, i64>(2)? as u32,
-                    body: row.get(3)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(mail)
-    }
-
-    pub fn count_unread_mail(&self, node_id: u32) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mail WHERE to_node = ?1 AND read = 0",
-            params![node_id as i64],
-            |row| row.get(0),
-        )?;
-        Ok(count as u64)
-    }
-
-    pub fn mark_mail_read(&self, mail_id: i64) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("UPDATE mail SET read = 1 WHERE id = ?1", params![mail_id])?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub fn mark_all_mail_read(&self, node_id: u32) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let count = conn.execute(
-            "UPDATE mail SET read = 1 WHERE to_node = ?1 AND read = 0",
-            params![node_id as i64],
-        )?;
-        Ok(count as u64)
-    }
-
-    pub fn delete_mail(&self, mail_id: i64, owner_node: u32) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let count = conn.execute(
-            "DELETE FROM mail WHERE id = ?1 AND to_node = ?2",
-            params![mail_id, owner_node as i64],
-        )?;
-        Ok(count > 0)
     }
 
     // --- Packet logging ---
@@ -1018,78 +942,6 @@ mod tests {
 
         let pos = db.get_node_position(0x12345678).unwrap();
         assert_eq!(pos, None); // 0,0 is treated as no position
-    }
-
-    // --- Mail tests ---
-
-    #[test]
-    fn test_store_and_get_mail() {
-        let db = setup_db();
-        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-
-        let id = db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Hello Bob!").unwrap();
-        assert!(id > 0);
-
-        let mail = db.get_unread_mail(0xBBBBBBBB).unwrap();
-        assert_eq!(mail.len(), 1);
-        assert_eq!(mail[0].from_node, 0xAAAAAAAA);
-        assert_eq!(mail[0].body, "Hello Bob!");
-    }
-
-    #[test]
-    fn test_count_unread_mail() {
-        let db = setup_db();
-        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-
-        assert_eq!(db.count_unread_mail(0xBBBBBBBB).unwrap(), 0);
-
-        db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Message 1").unwrap();
-        assert_eq!(db.count_unread_mail(0xBBBBBBBB).unwrap(), 1);
-
-        db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Message 2").unwrap();
-        assert_eq!(db.count_unread_mail(0xBBBBBBBB).unwrap(), 2);
-    }
-
-    #[test]
-    fn test_mark_mail_read() {
-        let db = setup_db();
-        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-
-        let id = db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Hello").unwrap();
-        assert_eq!(db.count_unread_mail(0xBBBBBBBB).unwrap(), 1);
-
-        db.mark_mail_read(id).unwrap();
-        assert_eq!(db.count_unread_mail(0xBBBBBBBB).unwrap(), 0);
-    }
-
-    #[test]
-    fn test_delete_mail() {
-        let db = setup_db();
-        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-
-        let id = db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Hello").unwrap();
-
-        // Bob can delete
-        assert!(db.delete_mail(id, 0xBBBBBBBB).unwrap());
-
-        // Already deleted
-        assert!(!db.delete_mail(id, 0xBBBBBBBB).unwrap());
-    }
-
-    #[test]
-    fn test_delete_mail_wrong_owner() {
-        let db = setup_db();
-        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-
-        let id = db.store_mail(0xAAAAAAAA, 0xBBBBBBBB, "Hello").unwrap();
-
-        // Alice cannot delete Bob's mail
-        assert!(!db.delete_mail(id, 0xAAAAAAAA).unwrap());
     }
 
     // --- Packet logging tests ---

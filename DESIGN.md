@@ -14,7 +14,6 @@ The project prioritizes **customizability** — adding a new feature means imple
 | Node Info | `!nodes [n]` | Lists mesh nodes the bot has seen, with last-seen times (default 5, max 20) | Public + DM |
 | Weather | `!weather` | Current conditions from Open-Meteo API — location-aware | Public + DM |
 | Welcome | *(automatic)* | Sends a DM greeting when a new node is first seen (with optional whitelist) | DM only |
-| Mail | `!mail` | Store-and-forward offline messaging | Public + DM |
 | Uptime | `!uptime` | Bot uptime and message statistics | Public + DM |
 | Help | `!help` | Lists available commands | Public + DM |
 
@@ -53,7 +52,7 @@ meshenger/
 │   ├── bridge.rs                # Bridge types and channels
 │   ├── config.rs                # TOML config structs (serde)
 │   ├── dashboard.rs             # Web dashboard HTTP server (axum)
-│   ├── db.rs                    # SQLite setup, node/packet/mail tracking
+│   ├── db.rs                    # SQLite setup, node/packet tracking
 │   ├── message.rs               # MessageContext, Response, CommandScope, MeshEvent
 │   ├── module.rs                # Module trait definition + registry
 │   ├── util.rs                  # Shared utility functions
@@ -66,7 +65,6 @@ meshenger/
 │       ├── node_info.rs         # !nodes — mesh node listing
 │       ├── weather.rs           # !weather — forecast from API
 │       ├── welcome.rs           # Auto-greet new nodes
-│       ├── mail.rs              # !mail — store-and-forward messaging
 │       ├── uptime.rs            # !uptime — bot statistics
 │       └── help.rs              # !help — list commands
 ```
@@ -208,7 +206,7 @@ The bot includes an in-memory rate limiter using a sliding window algorithm:
 
 ## Database Schema (`src/db.rs`)
 
-Using `rusqlite`. Three tables:
+Using `rusqlite`. Runtime tables are `nodes` and `packets`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS nodes (
@@ -240,15 +238,6 @@ CREATE TABLE IF NOT EXISTS packets (
     -- packet_type values: text, position, telemetry, nodeinfo,
     --   traceroute, neighborinfo, routing, other
 );
-
-CREATE TABLE IF NOT EXISTS mail (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp  INTEGER NOT NULL,
-    from_node  INTEGER NOT NULL,
-    to_node    INTEGER NOT NULL,
-    body       TEXT NOT NULL,
-    read       INTEGER NOT NULL DEFAULT 0
-);
 ```
 
 Key queries:
@@ -264,11 +253,6 @@ Key queries:
 - `log_packet(...)` — record incoming/outgoing packets with type and RF metadata
 - `message_count(direction) -> u64` — count text messages by direction
 - `node_count() -> u64` — count known nodes
-- `store_mail(from, to, body) -> id` — store offline mail
-- `get_unread_mail(node_id) -> Vec<MailMessage>` — get unread mail for a node
-- `count_unread_mail(node_id) -> u64` — count unread mail
-- `mark_mail_read(id)` — mark mail as read
-- `delete_mail(id, owner)` — delete mail owned by node
 - `dashboard_overview(hours, filter, bot_name)` — message/packet counts for dashboard
 - `dashboard_nodes(hours, filter)` — node list with via_mqtt and per-node hop summary for dashboard
 - `dashboard_throughput(hours, filter)` — text message throughput (smart bucketing)
@@ -308,22 +292,6 @@ Key queries:
 - Update `last_seen` and `last_welcomed` timestamps in DB
 - Whitelist supports hex (`!ebb0a1ce`) and decimal (`3954221518`) node IDs
 - All parameters configurable in config.toml
-
-### Mail (`!mail`) — scope: Both
-Store-and-forward offline messaging system.
-
-**Subcommands:**
-- `!mail send <recipient> <message>` — Send mail to a user
-- `!mail read` — Read and mark unread mail as read
-- `!mail list` — Show count of unread mail
-- `!mail delete <id>` — Delete a mail message
-
-**Recipient lookup** (in order):
-1. Hex node ID (with or without `!` prefix)
-2. Decimal node ID
-3. Case-insensitive match on short_name or long_name
-
-**Event handling**: When a node is discovered, the mail module checks for unread mail and notifies them: "You have N unread mail message(s). Send !mail read to view."
 
 ### Uptime (`!uptime`) — scope: Both
 - Tracks bot start time
@@ -505,10 +473,6 @@ scope = "both"
 [modules.welcome]
 enabled = true
 scope = "dm"
-
-[modules.mail]
-enabled = true
-scope = "both"
 
 [modules.uptime]
 enabled = true

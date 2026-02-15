@@ -42,10 +42,6 @@ scope = "both"
 enabled = true
 scope = "dm"
 
-[modules.mail]
-enabled = true
-scope = "both"
-
 [modules.uptime]
 enabled = true
 scope = "both"
