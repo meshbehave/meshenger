@@ -342,6 +342,42 @@ impl Db {
         }
     }
 
+    /// Return the most recently seen RF node (within `max_age_secs`) that has no inbound RF hop metadata recorded.
+    pub fn recent_rf_node_missing_hops(
+        &self,
+        max_age_secs: u64,
+        exclude_node_id: Option<u32>,
+    ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let since = Utc::now().timestamp() - (max_age_secs as i64);
+        let exclude = exclude_node_id.unwrap_or(0) as i64;
+        let result: Result<i64, _> = conn.query_row(
+            "SELECT n.node_id
+             FROM nodes n
+             WHERE n.via_mqtt = 0
+               AND n.last_seen > ?1
+               AND (?2 = 0 OR n.node_id != ?2)
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM packets p
+                   WHERE p.from_node = n.node_id
+                     AND p.direction = 'in'
+                     AND p.via_mqtt = 0
+                     AND p.hop_count IS NOT NULL
+               )
+             ORDER BY n.last_seen DESC
+             LIMIT 1",
+            params![since, exclude],
+            |row| row.get(0),
+        );
+
+        match result {
+            Ok(id) => Ok(Some(id as u32)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn store_mail(
         &self,
         from_node: u32,
@@ -926,6 +962,31 @@ mod tests {
     fn test_find_node_not_found() {
         let db = setup_db();
         assert_eq!(db.find_node_by_name("Unknown").unwrap(), None);
+    }
+
+    #[test]
+    fn test_recent_rf_node_missing_hops() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+
+        // Bob already has hop metadata
+        db.log_packet(0xBBBBBBBB, None, 0, "hi", "in", false, Some(-80), Some(5.0), Some(2), Some(3), "text").unwrap();
+
+        let candidate = db.recent_rf_node_missing_hops(3600, None).unwrap();
+        assert_eq!(candidate, Some(0xAAAAAAAA));
+    }
+
+    #[test]
+    fn test_recent_rf_node_missing_hops_excludes_node() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+
+        let candidate = db
+            .recent_rf_node_missing_hops(3600, Some(0xAAAAAAAA))
+            .unwrap();
+        assert_eq!(candidate, Some(0xBBBBBBBB));
     }
 
     // --- Position tests ---

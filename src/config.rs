@@ -8,6 +8,8 @@ pub struct Config {
     pub bot: BotConfig,
     pub welcome: WelcomeConfig,
     pub weather: WeatherConfig,
+    #[serde(default)]
+    pub traceroute_probe: TracerouteProbeConfig,
     pub modules: HashMap<String, ModuleConfig>,
     #[serde(default)]
     pub bridge: BridgeConfig,
@@ -34,6 +36,48 @@ impl Default for DashboardConfig {
 
 fn default_dashboard_bind() -> String {
     "0.0.0.0:9000".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TracerouteProbeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_traceroute_interval_secs")]
+    pub interval_secs: u64,
+    #[serde(default = "default_traceroute_recent_secs")]
+    pub recent_seen_within_secs: u64,
+    #[serde(default = "default_traceroute_cooldown_secs")]
+    pub per_node_cooldown_secs: u64,
+    #[serde(default = "default_traceroute_channel")]
+    pub mesh_channel: u32,
+}
+
+impl Default for TracerouteProbeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: default_traceroute_interval_secs(),
+            recent_seen_within_secs: default_traceroute_recent_secs(),
+            per_node_cooldown_secs: default_traceroute_cooldown_secs(),
+            mesh_channel: default_traceroute_channel(),
+        }
+    }
+}
+
+fn default_traceroute_interval_secs() -> u64 {
+    900
+}
+
+fn default_traceroute_recent_secs() -> u64 {
+    3600
+}
+
+fn default_traceroute_cooldown_secs() -> u64 {
+    21600
+}
+
+fn default_traceroute_channel() -> u32 {
+    0
 }
 
 #[derive(Debug, Deserialize, Default)]

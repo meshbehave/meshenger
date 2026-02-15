@@ -273,6 +273,7 @@ Key queries:
 - `dashboard_nodes(hours, filter)` — node list with via_mqtt and per-node hop summary for dashboard
 - `dashboard_throughput(hours, filter)` — text message throughput (smart bucketing)
 - `dashboard_packet_throughput(hours, filter, types)` — all packet type throughput
+- `recent_rf_node_missing_hops(max_age_secs, exclude_node_id)` — most recent RF node lacking hop metadata (for optional traceroute probing)
 
 ## Module Designs
 
@@ -423,6 +424,15 @@ axum HTTP server serving JSON APIs and static frontend files. Key features:
 - **Smart bucketing**: hourly buckets for ≤48h, daily for >48h
 - **Queue depth**: shared via `Arc<AtomicUsize>` from the bot's outgoing queue
 
+### Optional Auto Traceroute Probe
+
+An optional scheduler can queue low-frequency traceroute probes to discover hop metadata for RF nodes that currently have none.
+
+- Runs inside the existing async event loop (`tokio::select!` timer branch), not a separate thread
+- Reuses the existing outgoing queue and send pacing
+- Candidate query excludes self node ID
+- Per-node cooldown limits repeat probes
+
 ### Frontend (`web/`)
 
 React + TypeScript + Vite + Tailwind CSS v4 + Chart.js SPA.
@@ -443,6 +453,13 @@ Components:
 [dashboard]
 enabled = true
 bind_address = "0.0.0.0:9000"
+
+[traceroute_probe]
+enabled = false
+interval_secs = 900
+recent_seen_within_secs = 3600
+per_node_cooldown_secs = 21600
+mesh_channel = 0
 ```
 
 ## Configuration (`config.example.toml`)

@@ -28,6 +28,8 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 
 **Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, node table/map with MQTT/RF badges and per-node hop summary (last/avg/min), configurable time ranges (1d to 1y), and MQTT filtering.
 
+**Optional auto traceroute probe** — Can periodically send a low-frequency traceroute to recently-seen RF nodes that still lack hop metadata, reusing the bot's existing outgoing queue and pacing.
+
 **Holds mail** — Mesh nodes come and go. Meshenger stores messages for offline users and notifies them when they reconnect. Recipients can be specified by hex node ID (`!ebb0a1ce`), decimal ID, or name.
 
 ## Quick Start
@@ -120,6 +122,19 @@ bind_address = "0.0.0.0:9000"   # Address for the dashboard web server
 ```
 
 Run `cd web && npm run build` once to build the frontend, then access the dashboard at `http://localhost:9000`. For development, run `cd web && npm run dev` for hot-reload at `:5173` with API proxy to `:9000`.
+
+### Auto Traceroute Probe
+
+```toml
+[traceroute_probe]
+enabled = false
+interval_secs = 900             # one probe cycle every 15 minutes
+recent_seen_within_secs = 3600  # only consider RF nodes seen in the last hour
+per_node_cooldown_secs = 21600  # don't probe the same node again for 6 hours
+mesh_channel = 0
+```
+
+The probe targets the most recently seen local RF node that still has no inbound RF hop metadata. Probes are queued and sent via the same outgoing queue as normal bot messages, so send pacing remains centralized.
 
 ### Modules
 

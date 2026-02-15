@@ -61,10 +61,21 @@ Key components:
 - **`OutgoingMeshMessage`** — struct holding text, destination, channel, and DB logging fields
 - **`queue_message()`** — pushes a single message onto the queue
 - **`queue_responses()`** — converts `Response` objects into queued messages (with chunking for long text)
-- **`send_next_queued_message()`** — pops front message, calls `api.send_text()`, logs to DB
+- **`send_next_queued_message()`** — pops front message, sends either text or traceroute packet, logs to DB
 - **`send_delay_ms`** config option (default 1500ms) — minimum delay between consecutive transmissions
 
-Messages from all sources (command responses, event responses, bridge messages) flow through the queue. Only `send_next_queued_message()` touches `api`/`router`, keeping them out of the rest of the codebase.
+Messages from all sources (command responses, event responses, bridge messages, optional traceroute probes) flow through the queue. Only `send_next_queued_message()` touches `api`/`router`, keeping them out of the rest of the codebase.
+
+### Optional Traceroute Probe
+
+`[traceroute_probe]` can periodically queue a traceroute for a recently seen RF node that has no recorded inbound RF hop metadata yet.
+
+Safety defaults are conservative:
+- `interval_secs = 900` (15 min)
+- `per_node_cooldown_secs = 21600` (6 h)
+- `enabled = false` by default
+
+Candidate selection excludes the bot's own node ID in SQL to avoid no-op self-target loops.
 
 ### Error Handling
 

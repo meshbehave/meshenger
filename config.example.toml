@@ -55,6 +55,16 @@ enabled = true
 scope = "both"
 
 # ============================================================================
+# TRACEROUTE PROBE - Optional automatic hop discovery for RF nodes without hop data
+# ============================================================================
+# [traceroute_probe]
+# enabled = false
+# interval_secs = 900             # run one probe cycle every N seconds (recommended >= 600)
+# recent_seen_within_secs = 3600  # only consider RF nodes seen within this age window
+# per_node_cooldown_secs = 21600  # minimum time between probes to the same node
+# mesh_channel = 0                # channel index used when sending traceroute probes
+
+# ============================================================================
 # DASHBOARD - Web-based metrics dashboard
 # ============================================================================
 # [dashboard]

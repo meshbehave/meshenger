@@ -9,6 +9,7 @@ use meshtastic::protobufs::{self, from_radio, mesh_packet};
 use meshtastic::types::{MeshChannel, NodeId};
 use meshtastic::utils;
 use meshtastic::utils::stream::build_tcp_stream;
+use meshtastic::Message;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::bridge::{MeshBridgeMessage, MeshMessageSender, OutgoingBridgeMessage, OutgoingMessageReceiver};
@@ -18,7 +19,14 @@ use crate::message::{Destination, MeshEvent, MessageContext, Response};
 use crate::module::ModuleRegistry;
 
 #[derive(Debug, Clone)]
+enum OutgoingKind {
+    Text,
+    Traceroute { target_node: u32 },
+}
+
+#[derive(Debug, Clone)]
 struct OutgoingMeshMessage {
+    kind: OutgoingKind,
     text: String,
     destination: PacketDestination,
     channel: MeshChannel,
@@ -115,6 +123,8 @@ pub struct Bot {
     queue_depth: Arc<AtomicUsize>,
     /// SSE broadcast sender for real-time dashboard updates
     sse_tx: Option<tokio::sync::broadcast::Sender<()>>,
+    /// Last traceroute probe send time per target node
+    traceroute_last_sent: Mutex<HashMap<u32, Instant>>,
 }
 
 impl Bot {
@@ -135,6 +145,7 @@ impl Bot {
             outgoing_queue: Mutex::new(VecDeque::new()),
             queue_depth: Arc::new(AtomicUsize::new(0)),
             sse_tx: None,
+            traceroute_last_sent: Mutex::new(HashMap::new()),
         }
     }
 
@@ -197,6 +208,7 @@ impl Bot {
             let chunks = chunk_message(&response.text, self.config.bot.max_message_len);
             for (i, chunk) in chunks.into_iter().enumerate() {
                 self.queue_message(OutgoingMeshMessage {
+                    kind: OutgoingKind::Text,
                     text: chunk,
                     destination,
                     channel,
@@ -287,6 +299,12 @@ impl Bot {
         let send_delay = std::time::Duration::from_millis(self.config.bot.send_delay_ms);
         let send_timer = tokio::time::sleep(send_delay);
         tokio::pin!(send_timer);
+        let traceroute_enabled = self.config.traceroute_probe.enabled;
+        let traceroute_interval = std::time::Duration::from_secs(
+            self.config.traceroute_probe.interval_secs.max(60),
+        );
+        let traceroute_timer = tokio::time::sleep(traceroute_interval);
+        tokio::pin!(traceroute_timer);
 
         // Take ownership of bridge_rx if present
         let bridge_rx = match &self.bridge_rx {
@@ -335,6 +353,11 @@ impl Bot {
                         self.notify_dashboard();
                         send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
+                    _ = &mut traceroute_timer, if traceroute_enabled => {
+                        drop(rx_guard);
+                        self.maybe_queue_traceroute_probe(my_node_id);
+                        traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
+                    }
                 }
             } else {
                 // No bridges, just handle mesh packets
@@ -361,9 +384,67 @@ impl Bot {
                         self.notify_dashboard();
                         send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
+                    _ = &mut traceroute_timer, if traceroute_enabled => {
+                        self.maybe_queue_traceroute_probe(my_node_id);
+                        traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
+                    }
                 }
             }
         }
+    }
+
+    fn maybe_queue_traceroute_probe(&self, my_node_id: u32) {
+        let cfg = &self.config.traceroute_probe;
+        if !cfg.enabled {
+            return;
+        }
+
+        let target = match self.db.recent_rf_node_missing_hops(
+            cfg.recent_seen_within_secs,
+            Some(my_node_id),
+        ) {
+            Ok(Some(node_id)) => node_id,
+            Ok(None) => return,
+            Err(e) => {
+                log::error!("Traceroute probe candidate query failed: {}", e);
+                return;
+            }
+        };
+
+        {
+            let last_sent = self.traceroute_last_sent.lock().unwrap();
+            if let Some(last) = last_sent.get(&target) {
+                let cooldown = std::time::Duration::from_secs(cfg.per_node_cooldown_secs);
+                if last.elapsed() < cooldown {
+                    return;
+                }
+            }
+        }
+
+        let channel = match MeshChannel::new(cfg.mesh_channel) {
+            Ok(ch) => ch,
+            Err(e) => {
+                log::error!("Invalid traceroute mesh_channel {}: {}", cfg.mesh_channel, e);
+                return;
+            }
+        };
+
+        self.queue_message(OutgoingMeshMessage {
+            kind: OutgoingKind::Traceroute { target_node: target },
+            text: String::new(),
+            destination: PacketDestination::Node(NodeId::from(target)),
+            channel,
+            from_node: my_node_id,
+            to_node: Some(target),
+            mesh_channel: cfg.mesh_channel,
+            reply_id: None,
+        });
+
+        self.traceroute_last_sent
+            .lock()
+            .unwrap()
+            .insert(target, Instant::now());
+        log::info!("Queued traceroute probe for !{:08x}", target);
     }
 
     /// Pop and send the next message from the outgoing queue.
@@ -378,60 +459,113 @@ impl Bot {
         };
         self.queue_depth.fetch_sub(1, Ordering::Relaxed);
 
-        if let Some(reply_to_msg_id) = msg.reply_id {
-            log::info!(
-                "Sending queued reply [reply_to_msg_id={}]: {:?} -> {:?}",
-                reply_to_msg_id,
-                msg.text,
-                msg.destination
-            );
-        } else {
-            log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
-        }
+        match msg.kind {
+            OutgoingKind::Text => {
+                if let Some(reply_to_msg_id) = msg.reply_id {
+                    log::info!(
+                        "Sending queued reply [reply_to_msg_id={}]: {:?} -> {:?}",
+                        reply_to_msg_id,
+                        msg.text,
+                        msg.destination
+                    );
+                } else {
+                    log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
+                }
 
-        // Log outgoing message (no RF metadata for outgoing)
-        let _ = self.db.log_packet(
-            msg.from_node,
-            msg.to_node,
-            msg.mesh_channel,
-            &msg.text,
-            "out",
-            false,
-            None,
-            None,
-            None,
-            None,
-            "text",
-        );
-
-        let result = if msg.reply_id.is_some() {
-            let byte_data = msg.text.into_bytes().into();
-            api.send_mesh_packet(
-                router,
-                byte_data,
-                protobufs::PortNum::TextMessageApp,
-                msg.destination,
-                msg.channel,
-                true,  // want_ack
-                false, // want_response
-                true,  // echo_response
-                msg.reply_id,
-                None,  // emoji
-            )
-            .await
-        } else {
-            api.send_text(router, msg.text, msg.destination, true, msg.channel)
-                .await
-        };
-        if let Err(e) = result {
-            if let Some(reply_to_msg_id) = msg.reply_id {
-                log::error!(
-                    "Failed to send queued reply [reply_to_msg_id={}]: {}",
-                    reply_to_msg_id,
-                    e
+                // Log outgoing message (no RF metadata for outgoing)
+                let _ = self.db.log_packet(
+                    msg.from_node,
+                    msg.to_node,
+                    msg.mesh_channel,
+                    &msg.text,
+                    "out",
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "text",
                 );
-            } else {
-                log::error!("Failed to send queued message: {}", e);
+
+                let result = if msg.reply_id.is_some() {
+                    let byte_data = msg.text.into_bytes().into();
+                    api.send_mesh_packet(
+                        router,
+                        byte_data,
+                        protobufs::PortNum::TextMessageApp,
+                        msg.destination,
+                        msg.channel,
+                        true,  // want_ack
+                        false, // want_response
+                        true,  // echo_response
+                        msg.reply_id,
+                        None,  // emoji
+                    )
+                    .await
+                } else {
+                    api.send_text(router, msg.text, msg.destination, true, msg.channel)
+                        .await
+                };
+                if let Err(e) = result {
+                    if let Some(reply_to_msg_id) = msg.reply_id {
+                        log::error!(
+                            "Failed to send queued reply [reply_to_msg_id={}]: {}",
+                            reply_to_msg_id,
+                            e
+                        );
+                    } else {
+                        log::error!("Failed to send queued message: {}", e);
+                    }
+                }
+            }
+            OutgoingKind::Traceroute { target_node } => {
+                log::info!("Sending queued traceroute probe to !{:08x}", target_node);
+                let _ = self.db.log_packet(
+                    msg.from_node,
+                    Some(target_node),
+                    msg.mesh_channel,
+                    "",
+                    "out",
+                    false,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "traceroute",
+                );
+
+                let routing = protobufs::Routing {
+                    variant: Some(protobufs::routing::Variant::RouteRequest(
+                        protobufs::RouteDiscovery {
+                            route: vec![],
+                            snr_towards: vec![],
+                            route_back: vec![],
+                            snr_back: vec![],
+                        },
+                    )),
+                };
+                let payload = routing.encode_to_vec().into();
+                let result = api
+                    .send_mesh_packet(
+                        router,
+                        payload,
+                        protobufs::PortNum::TracerouteApp,
+                        msg.destination,
+                        msg.channel,
+                        true,  // want_ack
+                        true,  // want_response
+                        false, // echo_response
+                        None,
+                        None,
+                    )
+                    .await;
+                if let Err(e) = result {
+                    log::error!(
+                        "Failed to send queued traceroute to !{:08x}: {}",
+                        target_node,
+                        e
+                    );
+                }
             }
         }
     }
@@ -476,6 +610,7 @@ impl Bot {
         };
 
         self.queue_message(OutgoingMeshMessage {
+            kind: OutgoingKind::Text,
             text: msg.text,
             destination: PacketDestination::Broadcast,
             channel,
@@ -964,6 +1099,7 @@ mod tests {
                 longitude: 0.0,
                 units: "metric".to_string(),
             },
+            traceroute_probe: TracerouteProbeConfig::default(),
             modules: HashMap::new(),
             bridge: BridgeConfig::default(),
             dashboard: DashboardConfig::default(),
@@ -999,6 +1135,7 @@ mod tests {
 
         for i in 0..5 {
             bot.queue_message(OutgoingMeshMessage {
+                kind: OutgoingKind::Text,
                 text: format!("msg{}", i),
                 destination: PacketDestination::Broadcast,
                 channel: MeshChannel::new(0).unwrap(),
