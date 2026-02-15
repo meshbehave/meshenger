@@ -7,6 +7,24 @@ COPY src ./src
 
 RUN cargo build --release --locked
 
+FROM node:22-trixie-slim AS web-builder
+
+WORKDIR /web
+
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/index.html /web/index.html
+COPY web/tsconfig.json /web/tsconfig.json
+COPY web/tsconfig.app.json /web/tsconfig.app.json
+COPY web/tsconfig.node.json /web/tsconfig.node.json
+COPY web/vite.config.ts /web/vite.config.ts
+COPY web/eslint.config.js /web/eslint.config.js
+COPY web/public /web/public
+COPY web/src /web/src
+
+RUN npm run build
+
 FROM debian:trixie-slim AS runtime
 
 ARG APP_UID=1000
@@ -22,12 +40,28 @@ RUN groupadd --gid "${APP_GID}" meshenger \
 WORKDIR /app
 
 COPY --from=builder /build/target/release/meshenger /usr/local/bin/meshenger
+COPY --from=web-builder /web/dist /app/web/dist
 COPY config.example.toml /app/config.example.toml
 
 RUN mkdir -p /config /data \
     && chown -R meshenger:meshenger /app /config /data /home/meshenger
 
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'set -eu' \
+    '' \
+    '# Compose runs the app with working_dir=/data. The dashboard serves "web/dist"' \
+    '# relative to cwd, so link it to bundled assets if the mount is empty.' \
+    'if [ ! -e /data/web/dist ]; then' \
+    '    mkdir -p /data/web' \
+    '    ln -s /app/web/dist /data/web/dist' \
+    'fi' \
+    '' \
+    'exec /usr/local/bin/meshenger "$@"' \
+    > /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /usr/local/bin/docker-entrypoint.sh
+
 USER meshenger:meshenger
 
-ENTRYPOINT ["/usr/local/bin/meshenger"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/config/config.toml"]
