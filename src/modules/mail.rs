@@ -167,9 +167,9 @@ mod tests {
     fn setup_db() -> Db {
         let db = Db::open(Path::new(":memory:")).unwrap();
         // Add some test nodes
-        db.upsert_node(0xAAAAAAAA, "AAAA", "Alice").unwrap();
-        db.upsert_node(0xBBBBBBBB, "BBBB", "Bob").unwrap();
-        db.upsert_node(0xCCCCCCCC, "CCCC", "Charlie").unwrap();
+        db.upsert_node(0xAAAAAAAA, "AAAA", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "BBBB", "Bob", false).unwrap();
+        db.upsert_node(0xCCCCCCCC, "CCCC", "Charlie", false).unwrap();
         db
     }
 
@@ -453,6 +453,7 @@ mod tests {
             node_id: 0xBBBBBBBB,
             long_name: "Bob".to_string(),
             short_name: "BBBB".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -474,6 +475,7 @@ mod tests {
             node_id: 0xBBBBBBBB,
             long_name: "Bob".to_string(),
             short_name: "BBBB".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -493,6 +495,7 @@ mod tests {
             node_id: 0xBBBBBBBB,
             long_name: "Bob".to_string(),
             short_name: "BBBB".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();

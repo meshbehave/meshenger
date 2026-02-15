@@ -11,6 +11,29 @@ pub struct Config {
     pub modules: HashMap<String, ModuleConfig>,
     #[serde(default)]
     pub bridge: BridgeConfig,
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DashboardConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_dashboard_bind")]
+    pub bind_address: String,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind_address: default_dashboard_bind(),
+        }
+    }
+}
+
+fn default_dashboard_bind() -> String {
+    "0.0.0.0:9000".to_string()
 }
 
 #[derive(Debug, Deserialize, Default)]

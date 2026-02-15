@@ -24,6 +24,10 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 
 **Bridges to chat platforms** — Bidirectional message bridging to Telegram and Discord. Mesh users see `[TG:alice]` or `[DC:bob]` prefixed messages, and chat platform users see formatted mesh messages. No more checking two apps.
 
+**Tracks everything** — Every packet type (text, position, telemetry, traceroute, etc.) is logged with RF metadata. Nodes are tagged as MQTT or local RF based on their transport method.
+
+**Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, node table with MQTT/RF badges, configurable time ranges (1d to 1y), and MQTT filtering.
+
 **Holds mail** — Mesh nodes come and go. Meshenger stores messages for offline users and notifies them when they reconnect. Recipients can be specified by hex node ID (`!ebb0a1ce`), decimal ID, or name.
 
 ## Quick Start
@@ -106,6 +110,16 @@ latitude = 25.0330
 longitude = 121.5654
 units = "metric"                 # or "imperial"
 ```
+
+### Dashboard
+
+```toml
+[dashboard]
+enabled = true
+port = 9000          # HTTP port for the web dashboard
+```
+
+Run `cd web && npm run build` once to build the frontend, then access the dashboard at `http://localhost:9000`. For development, run `cd web && npm run dev` for hot-reload at `:5173` with API proxy to `:9000`.
 
 ### Modules
 

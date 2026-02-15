@@ -86,6 +86,7 @@ impl Module for WelcomeModule {
                 node_id,
                 long_name,
                 short_name,
+                ..
             } => {
                 if !self.is_allowed(*node_id) {
                     return Ok(None);
@@ -107,7 +108,7 @@ impl Module for WelcomeModule {
                 };
 
                 // Update node in DB before deciding on message
-                db.upsert_node(*node_id, short_name, long_name)?;
+                db.upsert_node(*node_id, short_name, long_name, false)?;
 
                 let text = if is_new {
                     log::info!("New node discovered: {} ({})", display_name, node_id);
@@ -188,6 +189,7 @@ mod tests {
             node_id: 0x12345678,
             long_name: "Alice".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -205,12 +207,13 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
 
         // Node already exists and was seen recently
-        db.upsert_node(0x12345678, "AAAA", "Alice").unwrap();
+        db.upsert_node(0x12345678, "AAAA", "Alice", false).unwrap();
 
         let event = MeshEvent::NodeDiscovered {
             node_id: 0x12345678,
             long_name: "Alice".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -226,6 +229,7 @@ mod tests {
             node_id: 0x12345678, // Not in whitelist
             long_name: "Alice".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -241,6 +245,7 @@ mod tests {
             node_id: 0x12345678, // In whitelist
             long_name: "Alice".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -256,6 +261,7 @@ mod tests {
             node_id: 0x12345678,
             long_name: "".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -272,6 +278,7 @@ mod tests {
             node_id: 0x12345678,
             long_name: "".to_string(),
             short_name: "".to_string(),
+            via_mqtt: false,
         };
 
         let result = module.handle_event(&event, &db).await.unwrap();
@@ -304,6 +311,7 @@ mod tests {
             node_id: 0x12345678,
             long_name: "Alice".to_string(),
             short_name: "AAAA".to_string(),
+            via_mqtt: false,
         };
 
         // First event sends welcome

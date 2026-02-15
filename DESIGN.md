@@ -52,8 +52,9 @@ meshenger/
 │   ├── bot.rs                   # Event loop, packet dispatch, bridge integration
 │   ├── bridge.rs                # Bridge types and channels
 │   ├── config.rs                # TOML config structs (serde)
-│   ├── db.rs                    # SQLite setup, node/message/mail tracking
-│   ├── message.rs               # MessageContext, Response, CommandScope types
+│   ├── dashboard.rs             # Web dashboard HTTP server (axum)
+│   ├── db.rs                    # SQLite setup, node/packet/mail tracking
+│   ├── message.rs               # MessageContext, Response, CommandScope, MeshEvent
 │   ├── module.rs                # Module trait definition + registry
 │   ├── util.rs                  # Shared utility functions
 │   ├── bridges/
@@ -128,7 +129,8 @@ pub struct Response {
 pub enum Destination { Sender, Broadcast, Node(u32) }
 
 pub enum MeshEvent {
-    NodeDiscovered { node_id: u32, long_name: String, short_name: String },
+    NodeDiscovered { node_id: u32, long_name: String, short_name: String, via_mqtt: bool },
+    PositionUpdate { node_id: u32, lat: f64, lon: f64, altitude: i32 },
 }
 ```
 
@@ -148,30 +150,47 @@ loop (reconnection) {
     wait for MyInfo packet to learn own node ID
 
     loop (event) {
-        packet = packet_rx.recv().await
-        match packet.payload_variant {
-            Packet(mp) => {
-                if portnum == PositionApp {
-                    update node position in DB
-                }
-                if portnum == TextMessageApp {
-                    extract text, build MessageContext
-                    strip command prefix, parse command
-                    check rate limit
-                    find matching module by command
-                    check scope (DM vs public) matches
-                    call module.handle_command()
-                    send response(s) via send_text()
+        select! {
+            packet = packet_rx.recv() => {
+                match packet.payload_variant {
+                    Packet(mp) => {
+                        extract RF metadata (rssi, snr, hop_count, hop_start)
+                        match portnum {
+                            TextMessageApp => handle_text_message()
+                                // parse command, check rate limit, dispatch to module
+                                // log_packet(packet_type="text")
+                            PositionApp => update position in DB
+                                // log_packet(packet_type="position")
+                            TelemetryApp =>
+                                // log_packet(packet_type="telemetry")
+                            TracerouteApp =>
+                                // log_packet(packet_type="traceroute")
+                            NeighborinfoApp =>
+                                // log_packet(packet_type="neighborinfo")
+                            RoutingApp =>
+                                // log_packet(packet_type="routing")
+                            _ =>
+                                // log_packet(packet_type="other")
+                        }
+                    }
+                    NodeInfo(ni) => {
+                        if in grace period: defer event
+                        else:
+                            build MeshEvent::NodeDiscovered (with via_mqtt)
+                            for each module: call handle_event()
+                            queue any responses
+                            upsert_node(via_mqtt) in DB
+                            log_packet(packet_type="nodeinfo")
+                    }
+                    _ => { skip }
                 }
             }
-            NodeInfo(ni) => {
-                build MeshEvent::NodeDiscovered
-                for each module: call handle_event()
-                send any responses
-                upsert node in DB
-                extract position if available
+            _ = send_timer => {
+                send_next_queued_message()  // drain outgoing queue
             }
-            _ => { skip }
+            _ = grace_period_timer => {
+                dispatch_deferred_events()  // process deferred NodeInfo
+            }
         }
     }
 
@@ -200,17 +219,26 @@ CREATE TABLE IF NOT EXISTS nodes (
     last_seen     INTEGER NOT NULL,
     last_welcomed INTEGER,              -- unix timestamp of last welcome sent
     latitude      REAL,                 -- last known position
-    longitude     REAL
+    longitude     REAL,
+    via_mqtt      INTEGER NOT NULL DEFAULT 0  -- 0 = RF, 1 = MQTT
 );
 
-CREATE TABLE IF NOT EXISTS messages (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp  INTEGER NOT NULL,
-    from_node  INTEGER NOT NULL,
-    to_node    INTEGER,              -- NULL = broadcast
-    channel    INTEGER NOT NULL,
-    text       TEXT NOT NULL,
-    direction  TEXT NOT NULL         -- 'in' or 'out'
+CREATE TABLE IF NOT EXISTS packets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp    INTEGER NOT NULL,
+    from_node    INTEGER NOT NULL,
+    to_node      INTEGER,              -- NULL = broadcast
+    channel      INTEGER NOT NULL,
+    text         TEXT NOT NULL,         -- empty string for non-text packets
+    direction    TEXT NOT NULL,         -- 'in' or 'out'
+    via_mqtt     INTEGER NOT NULL DEFAULT 0,
+    rssi         INTEGER,
+    snr          REAL,
+    hop_count    INTEGER,
+    hop_start    INTEGER,
+    packet_type  TEXT NOT NULL DEFAULT 'text'
+    -- packet_type values: text, position, telemetry, nodeinfo,
+    --   traceroute, neighborinfo, routing, other
 );
 
 CREATE TABLE IF NOT EXISTS mail (
@@ -224,7 +252,7 @@ CREATE TABLE IF NOT EXISTS mail (
 ```
 
 Key queries:
-- `upsert_node(id, short, long)` — INSERT OR UPDATE, set last_seen
+- `upsert_node(id, short, long, via_mqtt)` — INSERT OR UPDATE, set last_seen and via_mqtt
 - `is_node_new(id) -> bool` — check if node exists
 - `is_node_absent(id, threshold_hours) -> bool` — check if last_seen is older than threshold
 - `mark_welcomed(id)` — set last_welcomed to now
@@ -233,14 +261,18 @@ Key queries:
 - `find_node_by_name(name) -> Option<u32>` — find node by hex ID, decimal ID, or name
 - `update_position(id, lat, lon)` — store node's last known position
 - `get_node_position(id) -> Option<(lat, lon)>` — retrieve node's position
-- `log_message(...)` — record incoming/outgoing messages
-- `message_count(direction) -> u64` — count messages by direction
+- `log_packet(...)` — record incoming/outgoing packets with type and RF metadata
+- `message_count(direction) -> u64` — count text messages by direction
 - `node_count() -> u64` — count known nodes
 - `store_mail(from, to, body) -> id` — store offline mail
 - `get_unread_mail(node_id) -> Vec<MailMessage>` — get unread mail for a node
 - `count_unread_mail(node_id) -> u64` — count unread mail
 - `mark_mail_read(id)` — mark mail as read
 - `delete_mail(id, owner)` — delete mail owned by node
+- `dashboard_overview(hours, filter, bot_name)` — message/packet counts for dashboard
+- `dashboard_nodes(filter)` — node list with via_mqtt for dashboard
+- `dashboard_throughput(hours, filter)` — text message throughput (smart bucketing)
+- `dashboard_packet_throughput(hours, filter, types)` — all packet type throughput
 
 ## Module Designs
 
@@ -378,6 +410,40 @@ format = "[{name}] {message}"
 - `{id}` — Sender's node ID (hex)
 - `{message}` — Message text
 - `{channel}` — Mesh channel number
+
+## Dashboard
+
+An optional web dashboard provides real-time metrics and node tracking.
+
+### Backend (`src/dashboard.rs`)
+
+axum HTTP server serving JSON APIs and static frontend files. Key features:
+- **MQTT filtering**: `MqttFilter` enum (All/LocalOnly/MqttOnly) on most endpoints
+- **Time range**: `hours` parameter on all time-based endpoints
+- **Smart bucketing**: hourly buckets for ≤48h, daily for >48h
+- **Queue depth**: shared via `Arc<AtomicUsize>` from the bot's outgoing queue
+
+### Frontend (`web/`)
+
+React + TypeScript + Vite + Tailwind CSS v4 + Chart.js SPA.
+
+Components:
+- **TimeRangeSelector** — toggle: 1d / 3d / 7d / 30d / 90d / 365d / All
+- **OverviewCards** — 6 cards: Total Nodes, Messages In/Out, Packets In/Out, Queue Depth (labels reflect selected time range)
+- **ThroughputChart** — text message throughput (line chart)
+- **PacketThroughputChart** — all packet types with type toggle filters (All/Text/Position/Telemetry/Other)
+- **RssiChart / SnrChart** — RF quality distribution bar charts
+- **HopsChart** — hop count doughnut chart
+- **NodeTable** — sortable table with MQTT/RF source badges, filterable by MQTT status
+- **MqttFilter** — global toggle for MQTT vs local RF filtering
+
+### Configuration
+
+```toml
+[dashboard]
+enabled = true
+port = 9000
+```
 
 ## Configuration (`config.example.toml`)
 

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -116,17 +117,19 @@ pub struct Bot {
     bridge_rx: Option<tokio::sync::Mutex<OutgoingMessageReceiver>>,
     /// Outgoing message queue drained by the event loop timer
     outgoing_queue: Mutex<VecDeque<OutgoingMeshMessage>>,
+    /// Shared counter for current queue depth (used by dashboard)
+    queue_depth: Arc<AtomicUsize>,
 }
 
 impl Bot {
-    pub fn new(config: Config, db: Db, registry: ModuleRegistry) -> Self {
+    pub fn new(config: Arc<Config>, db: Arc<Db>, registry: ModuleRegistry) -> Self {
         let rate_limiter = RateLimiter::new(
             config.bot.rate_limit_commands,
             config.bot.rate_limit_window_secs,
         );
         Self {
-            config: Arc::new(config),
-            db: Arc::new(db),
+            config,
+            db,
             registry: Arc::new(registry),
             rate_limiter,
             connected_at: Mutex::new(None),
@@ -134,7 +137,13 @@ impl Bot {
             bridge_tx: None,
             bridge_rx: None,
             outgoing_queue: Mutex::new(VecDeque::new()),
+            queue_depth: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Returns a shared handle to the queue depth counter (for the dashboard).
+    pub fn queue_depth(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.queue_depth)
     }
 
     /// Set bridge channels for communication with external platforms.
@@ -150,6 +159,7 @@ impl Bot {
 
     fn queue_message(&self, msg: OutgoingMeshMessage) {
         self.outgoing_queue.lock().unwrap().push_back(msg);
+        self.queue_depth.fetch_add(1, Ordering::Relaxed);
     }
 
     fn queue_responses(&self, ctx: &MessageContext, responses: &[Response], my_node_id: u32) {
@@ -351,16 +361,23 @@ impl Bot {
             Some(m) => m,
             None => return,
         };
+        self.queue_depth.fetch_sub(1, Ordering::Relaxed);
 
         log::info!("Sending queued: {:?} -> {:?}", msg.text, msg.destination);
 
-        // Log outgoing message
-        let _ = self.db.log_message(
+        // Log outgoing message (no RF metadata for outgoing)
+        let _ = self.db.log_packet(
             msg.from_node,
             msg.to_node,
             msg.mesh_channel,
             &msg.text,
             "out",
+            false,
+            None,
+            None,
+            None,
+            None,
+            "text",
         );
 
         if let Err(e) = api
@@ -424,6 +441,15 @@ impl Bot {
         });
     }
 
+    /// Extract RF metadata from a mesh packet for logging.
+    fn rf_metadata(mesh_packet: &protobufs::MeshPacket) -> (Option<i32>, Option<f32>, Option<u32>, Option<u32>) {
+        let rssi = if mesh_packet.rx_rssi != 0 { Some(mesh_packet.rx_rssi) } else { None };
+        let snr = if mesh_packet.rx_snr != 0.0 { Some(mesh_packet.rx_snr) } else { None };
+        let hop_count = mesh_packet.hop_start.checked_sub(mesh_packet.hop_limit);
+        let hop_start = if mesh_packet.hop_start > 0 { Some(mesh_packet.hop_start) } else { None };
+        (rssi, snr, hop_count, hop_start)
+    }
+
     async fn handle_mesh_packet(
         &self,
         my_node_id: u32,
@@ -434,33 +460,82 @@ impl Bot {
             _ => return,
         };
 
-        // Handle position packets
-        if data.portnum() == protobufs::PortNum::PositionApp {
-            if let Ok(pos) = meshtastic::Message::decode(data.payload.as_slice()) {
-                let pos: protobufs::Position = pos;
-                if let (Some(lat_i), Some(lon_i)) = (pos.latitude_i, pos.longitude_i) {
-                    let lat = lat_i as f64 * 1e-7;
-                    let lon = lon_i as f64 * 1e-7;
-                    if lat != 0.0 || lon != 0.0 {
-                        log::debug!("Position from !{:08x}: {:.4}, {:.4}", mesh_packet.from, lat, lon);
-                        let _ = self.db.update_position(mesh_packet.from, lat, lon);
+        let (rssi, snr, hop_count, hop_start) = Self::rf_metadata(mesh_packet);
+
+        match data.portnum() {
+            protobufs::PortNum::PositionApp => {
+                // Log position packet
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "position",
+                );
+                // Update position in DB
+                if let Ok(pos) = meshtastic::Message::decode(data.payload.as_slice()) {
+                    let pos: protobufs::Position = pos;
+                    if let (Some(lat_i), Some(lon_i)) = (pos.latitude_i, pos.longitude_i) {
+                        let lat = lat_i as f64 * 1e-7;
+                        let lon = lon_i as f64 * 1e-7;
+                        if lat != 0.0 || lon != 0.0 {
+                            log::debug!("Position from !{:08x}: {:.4}, {:.4}", mesh_packet.from, lat, lon);
+                            let _ = self.db.update_position(mesh_packet.from, lat, lon);
+                        }
                     }
                 }
             }
-            return;
+            protobufs::PortNum::TelemetryApp => {
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "telemetry",
+                );
+            }
+            protobufs::PortNum::TracerouteApp => {
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "traceroute",
+                );
+            }
+            protobufs::PortNum::NeighborinfoApp => {
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "neighborinfo",
+                );
+            }
+            protobufs::PortNum::RoutingApp => {
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "routing",
+                );
+            }
+            protobufs::PortNum::TextMessageApp => {
+                self.handle_text_message(my_node_id, mesh_packet, data, rssi, snr, hop_count, hop_start).await;
+            }
+            _ => {
+                let _ = self.db.log_packet(
+                    mesh_packet.from, None, mesh_packet.channel, "", "in",
+                    mesh_packet.via_mqtt, rssi, snr, hop_count, hop_start, "other",
+                );
+            }
         }
+    }
 
-        if data.portnum() != protobufs::PortNum::TextMessageApp {
-            return;
-        }
-
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_text_message(
+        &self,
+        my_node_id: u32,
+        mesh_packet: &protobufs::MeshPacket,
+        data: &protobufs::Data,
+        rssi: Option<i32>,
+        snr: Option<f32>,
+        hop_count: Option<u32>,
+        hop_start: Option<u32>,
+    ) {
         let text = match String::from_utf8(data.payload.clone()) {
             Ok(t) => t,
             Err(_) => return,
         };
 
         let is_dm = mesh_packet.to == my_node_id;
-        let hop_count = mesh_packet.hop_start.saturating_sub(mesh_packet.hop_limit);
+        let hops = hop_count.unwrap_or(0);
 
         let sender_name = self
             .db
@@ -474,7 +549,7 @@ impl Bot {
             is_dm,
             rssi: mesh_packet.rx_rssi,
             snr: mesh_packet.rx_snr,
-            hop_count,
+            hop_count: hops,
             hop_limit: mesh_packet.hop_limit,
             via_mqtt: mesh_packet.via_mqtt,
         };
@@ -486,13 +561,19 @@ impl Bot {
             text.trim()
         );
 
-        // Log incoming message
-        let _ = self.db.log_message(
+        // Log incoming text message with RF metadata
+        let _ = self.db.log_packet(
             mesh_packet.from,
             if is_dm { Some(my_node_id) } else { None },
             mesh_packet.channel,
             &text,
             "in",
+            mesh_packet.via_mqtt,
+            rssi,
+            snr,
+            hop_count,
+            hop_start,
+            "text",
         );
 
         // Broadcast to bridges (only public messages, skip messages that look like they came from a bridge)
@@ -574,11 +655,19 @@ impl Bot {
             None => (String::new(), String::new()),
         };
 
+        let via_mqtt = node_info.via_mqtt;
+
         log::debug!(
             "NodeInfo: !{:08x} {} ({})",
             node_id,
             long_name,
             short_name
+        );
+
+        // Log nodeinfo packet (no RF metadata on NodeInfo)
+        let _ = self.db.log_packet(
+            node_id, None, 0, "", "in",
+            via_mqtt, None, None, None, None, "nodeinfo",
         );
 
         // Skip dispatching events for our own node
@@ -604,6 +693,7 @@ impl Bot {
                     node_id,
                     long_name: long_name.clone(),
                     short_name: short_name.clone(),
+                    via_mqtt,
                 });
                 // Skip upsert/position during grace period so nodes stay "new"
                 // until deferred events are dispatched
@@ -613,6 +703,7 @@ impl Bot {
                     node_id,
                     long_name: long_name.clone(),
                     short_name: short_name.clone(),
+                    via_mqtt,
                 };
 
                 // Dispatch event to all modules, queuing any responses
@@ -622,7 +713,7 @@ impl Bot {
 
         // Always upsert the node (welcome module may have already done this,
         // but upsert is idempotent and updates last_seen)
-        if let Err(e) = self.db.upsert_node(node_id, &short_name, &long_name) {
+        if let Err(e) = self.db.upsert_node(node_id, &short_name, &long_name, via_mqtt) {
             log::error!("Failed to upsert node: {}", e);
         }
 
@@ -661,12 +752,13 @@ impl Bot {
                 node_id,
                 long_name,
                 short_name,
+                via_mqtt,
             } = event
             {
                 self.dispatch_event_to_modules(event, my_node_id).await;
 
                 // Upsert after module dispatch (was deferred along with the event)
-                if let Err(e) = self.db.upsert_node(*node_id, short_name, long_name) {
+                if let Err(e) = self.db.upsert_node(*node_id, short_name, long_name, *via_mqtt) {
                     log::error!("Failed to upsert deferred node: {}", e);
                 }
             }
@@ -811,12 +903,13 @@ mod tests {
             },
             modules: HashMap::new(),
             bridge: BridgeConfig::default(),
+            dashboard: DashboardConfig::default(),
         }
     }
 
     fn test_bot() -> Bot {
-        let config = test_config();
-        let db = Db::open(Path::new(":memory:")).unwrap();
+        let config = Arc::new(test_config());
+        let db = Arc::new(Db::open(Path::new(":memory:")).unwrap());
         let registry = ModuleRegistry::new();
         Bot::new(config, db, registry)
     }

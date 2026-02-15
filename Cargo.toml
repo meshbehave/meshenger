@@ -17,3 +17,5 @@ env_logger = "0.11"
 chrono = "0.4"
 teloxide = { version = "0.13", features = ["macros"] }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs"] }

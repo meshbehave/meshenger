@@ -61,6 +61,7 @@ pub enum MeshEvent {
         node_id: u32,
         long_name: String,
         short_name: String,
+        via_mqtt: bool,
     },
     PositionUpdate {
         node_id: u32,

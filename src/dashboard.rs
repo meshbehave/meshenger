@@ -1,0 +1,235 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::Json;
+use axum::routing::get;
+use axum::Router;
+use serde::{Deserialize, Serialize};
+use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
+
+use crate::config::Config;
+use crate::db::{Db, MqttFilter};
+
+#[derive(Clone)]
+struct AppState {
+    db: Arc<Db>,
+    config: Arc<Config>,
+    queue_depth: Arc<AtomicUsize>,
+}
+
+#[derive(Deserialize)]
+struct MqttParam {
+    #[serde(default = "default_mqtt")]
+    mqtt: String,
+}
+
+fn default_mqtt() -> String {
+    "all".to_string()
+}
+
+#[derive(Deserialize)]
+struct HoursParam {
+    #[serde(default = "default_hours")]
+    hours: u32,
+    #[serde(default = "default_mqtt")]
+    mqtt: String,
+}
+
+fn default_hours() -> u32 {
+    24
+}
+
+#[derive(Deserialize)]
+struct PacketThroughputParam {
+    #[serde(default = "default_hours")]
+    hours: u32,
+    #[serde(default = "default_mqtt")]
+    mqtt: String,
+    #[serde(default)]
+    types: Option<String>,
+}
+
+#[derive(Serialize)]
+struct QueueResponse {
+    depth: usize,
+}
+
+pub struct Dashboard {
+    config: Arc<Config>,
+    db: Arc<Db>,
+    queue_depth: Arc<AtomicUsize>,
+}
+
+impl Dashboard {
+    pub fn new(config: Arc<Config>, db: Arc<Db>, queue_depth: Arc<AtomicUsize>) -> Self {
+        Self {
+            config,
+            db,
+            queue_depth,
+        }
+    }
+
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let bind = &self.config.dashboard.bind_address;
+        log::info!("Starting dashboard on {}", bind);
+
+        let state = AppState {
+            db: self.db,
+            config: self.config.clone(),
+            queue_depth: self.queue_depth,
+        };
+
+        let api_routes = Router::new()
+            .route("/api/overview", get(handle_overview))
+            .route("/api/nodes", get(handle_nodes))
+            .route("/api/throughput", get(handle_throughput))
+            .route("/api/packet-throughput", get(handle_packet_throughput))
+            .route("/api/rssi", get(handle_rssi))
+            .route("/api/snr", get(handle_snr))
+            .route("/api/hops", get(handle_hops))
+            .route("/api/positions", get(handle_positions))
+            .route("/api/queue", get(handle_queue));
+
+        // Serve static files from web/dist/ if the directory exists (prod mode)
+        let app = if std::path::Path::new("web/dist/index.html").exists() {
+            let serve_dir = ServeDir::new("web/dist")
+                .fallback(ServeFile::new("web/dist/index.html"));
+            api_routes
+                .fallback_service(serve_dir)
+                .layer(CorsLayer::permissive())
+                .with_state(state)
+        } else {
+            api_routes
+                .layer(CorsLayer::permissive())
+                .with_state(state)
+        };
+
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        log::info!("Dashboard listening on {}", bind);
+        axum::serve(listener, app).await?;
+        Ok(())
+    }
+}
+
+async fn handle_overview(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let overview = state
+        .db
+        .dashboard_overview(params.hours, filter, &state.config.bot.name)
+        .map_err(|e| {
+            log::error!("Dashboard overview error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::to_value(overview).unwrap()))
+}
+
+async fn handle_nodes(
+    State(state): State<AppState>,
+    Query(params): Query<MqttParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let nodes = state.db.dashboard_nodes(filter).map_err(|e| {
+        log::error!("Dashboard nodes error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::to_value(nodes).unwrap()))
+}
+
+async fn handle_throughput(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let buckets = state
+        .db
+        .dashboard_throughput(params.hours, filter)
+        .map_err(|e| {
+            log::error!("Dashboard throughput error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::to_value(buckets).unwrap()))
+}
+
+async fn handle_packet_throughput(
+    State(state): State<AppState>,
+    Query(params): Query<PacketThroughputParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let packet_types: Option<Vec<String>> = params.types.map(|t| {
+        t.split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    });
+    let buckets = state
+        .db
+        .dashboard_packet_throughput(params.hours, filter, packet_types.as_deref())
+        .map_err(|e| {
+            log::error!("Dashboard packet throughput error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::to_value(buckets).unwrap()))
+}
+
+async fn handle_rssi(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let buckets = state.db.dashboard_rssi(params.hours, filter).map_err(|e| {
+        log::error!("Dashboard RSSI error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::to_value(buckets).unwrap()))
+}
+
+async fn handle_snr(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let buckets = state.db.dashboard_snr(params.hours, filter).map_err(|e| {
+        log::error!("Dashboard SNR error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::to_value(buckets).unwrap()))
+}
+
+async fn handle_hops(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let buckets = state
+        .db
+        .dashboard_hops(params.hours, filter)
+        .map_err(|e| {
+            log::error!("Dashboard hops error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(serde_json::to_value(buckets).unwrap()))
+}
+
+async fn handle_positions(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let positions = state.db.dashboard_positions().map_err(|e| {
+        log::error!("Dashboard positions error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(serde_json::to_value(positions).unwrap()))
+}
+
+async fn handle_queue(
+    State(state): State<AppState>,
+) -> Json<QueueResponse> {
+    Json(QueueResponse {
+        depth: state.queue_depth.load(Ordering::Relaxed),
+    })
+}

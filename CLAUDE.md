@@ -70,9 +70,35 @@ Messages from all sources (command responses, event responses, bridge messages) 
 
 Use `Box<dyn std::error::Error + Send + Sync>` for all async error types. The `RouterError` struct in `bot.rs` exists solely because the `PacketRouter` trait requires `E: std::error::Error`.
 
+### Dashboard
+
+An optional web dashboard (`src/dashboard.rs`) serves metrics via an axum HTTP server. Enabled via `[dashboard] enabled = true` in config.
+
+**Backend** (`src/dashboard.rs`): axum routes under `/api/*` return JSON. Queries go through `Db` dashboard methods. An `MqttFilter` enum (All/LocalOnly/MqttOnly) filters metrics by MQTT vs local RF. Queue depth is shared via `Arc<AtomicUsize>`. Static files from `web/dist/` are served in production via `tower_http::services::ServeDir`.
+
+API endpoints:
+- `GET /api/overview?hours=24` — node count, message in/out (text only), packet in/out (all types), bot name
+- `GET /api/nodes?mqtt=all|local|mqtt_only` — node list with MQTT/RF distinction
+- `GET /api/throughput?hours=24&mqtt=all` — text message throughput (hourly or daily buckets)
+- `GET /api/packet-throughput?hours=24&mqtt=all&types=text,position,telemetry` — all packet type throughput with optional type filter
+- `GET /api/rssi?hours=24&mqtt=all` — RSSI distribution
+- `GET /api/snr?hours=24&mqtt=all` — SNR distribution
+- `GET /api/hops?hours=24&mqtt=all` — hop count distribution
+- `GET /api/queue` — current outgoing queue depth
+
+Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket by day. This keeps charts readable at longer time ranges.
+
+**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js. Dark theme. Auto-refreshes every 30s. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, sortable node table (with MQTT/RF badges), MQTT filter toggle.
+
+**Dev workflow**: Run `cd web && npm run dev` (Vite at :5173 with proxy to :9000) alongside `cargo run`. **Prod workflow**: `cd web && npm run build` then `cargo run` — axum serves both API and SPA from port 9000.
+
 ### Database
 
-SQLite via `rusqlite` with bundled SQLite. Three tables: `nodes`, `messages`, `mail`. Schema auto-migrates (adds columns if missing). All access through the `Db` struct in `db.rs`. Use in-memory SQLite (`:memory:`) for tests.
+SQLite via `rusqlite` with bundled SQLite. Three tables: `nodes`, `packets`, `mail`. All access through the `Db` struct in `db.rs`. Use in-memory SQLite (`:memory:`) for tests.
+
+The `packets` table includes a `packet_type` column (`text`, `position`, `telemetry`, `nodeinfo`, `traceroute`, `neighborinfo`, `routing`, `other`) and RF metadata columns (`via_mqtt`, `rssi`, `snr`, `hop_count`, `hop_start`). All packet types from the Meshtastic node are logged, not just text messages. `log_packet()` accepts these fields — outgoing messages pass `"text"`/`false`/`None`.
+
+The `nodes` table includes a `via_mqtt` column tracking whether a node was last seen via MQTT or local RF. This is populated from the `NodeInfo` protobuf's `via_mqtt` field and carried through `MeshEvent::NodeDiscovered` (including deferred events during the startup grace period).
 
 ### Configuration
 

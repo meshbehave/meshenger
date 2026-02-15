@@ -102,8 +102,8 @@ mod tests {
         let ctx = test_context();
 
         // Add some nodes
-        db.upsert_node(0xaabbccdd, "ABCD", "Alice's Node").unwrap();
-        db.upsert_node(0x11223344, "EFGH", "Bob's Node").unwrap();
+        db.upsert_node(0xaabbccdd, "ABCD", "Alice's Node", false).unwrap();
+        db.upsert_node(0x11223344, "EFGH", "Bob's Node", false).unwrap();
 
         let result = module.handle_command("nodes", "", &ctx, &db).await.unwrap();
         let responses = result.unwrap();
@@ -124,7 +124,7 @@ mod tests {
 
         // Add 10 nodes
         for i in 0..10u32 {
-            db.upsert_node(i, &format!("N{}", i), &format!("Node {}", i)).unwrap();
+            db.upsert_node(i, &format!("N{}", i), &format!("Node {}", i), false).unwrap();
         }
 
         // Request only 3
@@ -146,7 +146,7 @@ mod tests {
 
         // Add 25 nodes
         for i in 0..25u32 {
-            db.upsert_node(i, &format!("N{}", i), &format!("Node {}", i)).unwrap();
+            db.upsert_node(i, &format!("N{}", i), &format!("Node {}", i), false).unwrap();
         }
 
         // Request 100 (should be capped to 20)
@@ -163,7 +163,7 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let ctx = test_context();
 
-        db.upsert_node(0x12345678, "SHORT", "Long Name Here").unwrap();
+        db.upsert_node(0x12345678, "SHORT", "Long Name Here", false).unwrap();
 
         let result = module.handle_command("nodes", "", &ctx, &db).await.unwrap();
         let text = &result.unwrap()[0].text;
@@ -178,7 +178,7 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let ctx = test_context();
 
-        db.upsert_node(0x12345678, "SHORT", "").unwrap();
+        db.upsert_node(0x12345678, "SHORT", "", false).unwrap();
 
         let result = module.handle_command("nodes", "", &ctx, &db).await.unwrap();
         let text = &result.unwrap()[0].text;
@@ -192,7 +192,7 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let ctx = test_context();
 
-        db.upsert_node(0x12345678, "", "").unwrap();
+        db.upsert_node(0x12345678, "", "", false).unwrap();
 
         let result = module.handle_command("nodes", "", &ctx, &db).await.unwrap();
         let text = &result.unwrap()[0].text;

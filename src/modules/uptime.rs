@@ -114,9 +114,9 @@ mod tests {
         let ctx = test_context();
 
         // Log some messages
-        db.log_message(0x12345678, None, 0, "test", "in").unwrap();
-        db.log_message(0x12345678, None, 0, "test", "in").unwrap();
-        db.log_message(0x12345678, Some(0xaaaaaaaa), 0, "reply", "out").unwrap();
+        db.log_packet(0x12345678, None, 0, "test", "in", false, None, None, None, None, "text").unwrap();
+        db.log_packet(0x12345678, None, 0, "test", "in", false, None, None, None, None, "text").unwrap();
+        db.log_packet(0x12345678, Some(0xaaaaaaaa), 0, "reply", "out", false, None, None, None, None, "text").unwrap();
 
         let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
         let text = &result.unwrap()[0].text;
@@ -132,9 +132,9 @@ mod tests {
         let ctx = test_context();
 
         // Add some nodes
-        db.upsert_node(0xAAAAAAAA, "A", "Alice").unwrap();
-        db.upsert_node(0xBBBBBBBB, "B", "Bob").unwrap();
-        db.upsert_node(0xCCCCCCCC, "C", "Charlie").unwrap();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+        db.upsert_node(0xCCCCCCCC, "C", "Charlie", false).unwrap();
 
         let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
         let text = &result.unwrap()[0].text;

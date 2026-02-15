@@ -2,6 +2,7 @@ mod bot;
 mod bridge;
 mod bridges;
 mod config;
+mod dashboard;
 mod db;
 mod message;
 mod module;
@@ -9,11 +10,13 @@ mod modules;
 mod util;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use bridge::create_bridge_channels;
 use bridges::discord::BridgeDirection as DiscordDirection;
 use bridges::{BridgeDirection, DiscordBridge, DiscordBridgeConfig, TelegramBridge, TelegramBridgeConfig};
 use config::Config;
+use dashboard::Dashboard;
 use db::Db;
 
 #[tokio::main]
@@ -36,10 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         std::process::exit(1);
     }
 
-    let config = Config::load(path)?;
+    let config = Arc::new(Config::load(path)?);
     log::info!("Loaded config from {}", config_path);
 
-    let db = Db::open(Path::new(&config.bot.db_path))?;
+    let db = Arc::new(Db::open(Path::new(&config.bot.db_path))?);
     log::info!("Database opened at {}", config.bot.db_path);
 
     let registry = modules::build_registry(&config);
@@ -104,8 +107,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     // Create bot with bridge channels
-    let bot = bot::Bot::new(config, db, registry)
+    let bot = bot::Bot::new(Arc::clone(&config), Arc::clone(&db), registry)
         .with_bridge_channels(bridge_tx, outgoing_rx);
+
+    // Start dashboard if enabled
+    if config.dashboard.enabled {
+        let dashboard = Dashboard::new(
+            Arc::clone(&config),
+            Arc::clone(&db),
+            bot.queue_depth(),
+        );
+        tokio::spawn(async move {
+            if let Err(e) = dashboard.run().await {
+                log::error!("Dashboard error: {}", e);
+            }
+        });
+    }
 
     bot.run().await
 }
