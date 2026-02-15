@@ -86,6 +86,15 @@ pub struct Node {
     pub last_welcomed: Option<i64>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NodeWithHop {
+    pub node_id: u32,
+    pub short_name: String,
+    pub long_name: String,
+    pub last_seen: i64,
+    pub last_hop: Option<u32>,
+}
+
 impl Db {
     pub fn open(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let conn = Connection::open(path)?;
@@ -228,6 +237,45 @@ impl Db {
                     first_seen: row.get(3)?,
                     last_seen: row.get(4)?,
                     last_welcomed: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(nodes)
+    }
+
+    pub fn get_recent_nodes_with_last_hop(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<NodeWithHop>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT
+                n.node_id,
+                n.short_name,
+                n.long_name,
+                n.last_seen,
+                (
+                    SELECT p.hop_count
+                    FROM packets p
+                    WHERE p.from_node = n.node_id
+                      AND p.direction = 'in'
+                      AND p.via_mqtt = 0
+                      AND p.hop_count IS NOT NULL
+                    ORDER BY p.timestamp DESC, p.id DESC
+                    LIMIT 1
+                ) AS last_hop
+             FROM nodes n
+             ORDER BY n.last_seen DESC
+             LIMIT ?1",
+        )?;
+        let nodes = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(NodeWithHop {
+                    node_id: row.get::<_, i64>(0)? as u32,
+                    short_name: row.get(1)?,
+                    long_name: row.get(2)?,
+                    last_seen: row.get(3)?,
+                    last_hop: row.get::<_, Option<i64>>(4)?.map(|h| h as u32),
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -886,6 +934,26 @@ mod tests {
     fn test_find_node_not_found() {
         let db = setup_db();
         assert_eq!(db.find_node_by_name("Unknown").unwrap(), None);
+    }
+
+    #[test]
+    fn test_get_recent_nodes_with_last_hop() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+
+        db.log_packet(0xAAAAAAAA, None, 0, "a1", "in", false, Some(-80), Some(5.0), Some(2), Some(7), "text").unwrap();
+        db.log_packet(0xAAAAAAAA, None, 0, "a2", "in", false, Some(-78), Some(5.2), Some(4), Some(7), "text").unwrap();
+
+        let nodes = db.get_recent_nodes_with_last_hop(10).unwrap();
+        assert_eq!(nodes.len(), 2);
+        let limited = db.get_recent_nodes_with_last_hop(1).unwrap();
+        assert_eq!(limited.len(), 1);
+
+        let alice = nodes.iter().find(|n| n.node_id == 0xAAAAAAAA).unwrap();
+        let bob = nodes.iter().find(|n| n.node_id == 0xBBBBBBBB).unwrap();
+        assert_eq!(alice.last_hop, Some(4));
+        assert_eq!(bob.last_hop, None);
     }
 
     #[test]

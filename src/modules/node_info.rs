@@ -35,11 +35,12 @@ impl Module for NodeInfoModule {
     ) -> Result<Option<Vec<Response>>, Box<dyn std::error::Error + Send + Sync>> {
         let count: usize = args.parse().unwrap_or(5).min(20);
 
-        let nodes = db.get_all_nodes()?;
+        let total_nodes = db.node_count()? as usize;
+        let nodes = db.get_recent_nodes_with_last_hop(count)?;
         let now = Utc::now().timestamp();
 
-        let mut lines = vec![format!("Nodes seen: {}", nodes.len())];
-        for node in nodes.iter().take(count) {
+        let mut lines = vec![format!("Nodes seen: {}", total_nodes)];
+        for node in &nodes {
             let name = if !node.long_name.is_empty() {
                 &node.long_name
             } else if !node.short_name.is_empty() {
@@ -48,11 +49,15 @@ impl Module for NodeInfoModule {
                 "unknown"
             };
             let ago = format_ago(now - node.last_seen);
-            lines.push(format!("!{:08x} {} ({})", node.node_id, name, ago));
+            let hops = node
+                .last_hop
+                .map(|h| format!(" | hops {}", h))
+                .unwrap_or_default();
+            lines.push(format!("!{:08x} {} ({}){}", node.node_id, name, ago, hops));
         }
 
-        if nodes.len() > count {
-            lines.push(format!("...and {} more", nodes.len() - count));
+        if total_nodes > nodes.len() {
+            lines.push(format!("...and {} more", total_nodes - nodes.len()));
         }
 
         Ok(Some(vec![Response {
@@ -200,6 +205,34 @@ mod tests {
         let text = &result.unwrap()[0].text;
 
         assert!(text.contains("unknown"));
+    }
+
+    #[tokio::test]
+    async fn test_nodes_includes_hops_when_available() {
+        let module = NodeInfoModule;
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let ctx = test_context();
+
+        db.upsert_node(0x12345678, "N1", "Node 1", false).unwrap();
+        db.log_packet(
+            0x12345678,
+            None,
+            0,
+            "hi",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(3),
+            Some(7),
+            "text",
+        )
+        .unwrap();
+
+        let result = module.handle_command("nodes", "", &ctx, &db).await.unwrap();
+        let text = &result.unwrap()[0].text;
+
+        assert!(text.contains("hops 3"));
     }
 
     #[test]
