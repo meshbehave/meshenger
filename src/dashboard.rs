@@ -13,6 +13,15 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::config::Config;
 use crate::db::{Db, MqttFilter};
 
+fn to_json<T: Serialize>(value: T) -> Result<Json<serde_json::Value>, StatusCode> {
+    serde_json::to_value(value)
+        .map(Json)
+        .map_err(|e| {
+            log::error!("JSON serialization error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+}
+
 #[derive(Clone)]
 struct AppState {
     db: Arc<Db>,
@@ -126,7 +135,7 @@ async fn handle_overview(
             log::error!("Dashboard overview error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(serde_json::to_value(overview).unwrap()))
+    to_json(overview)
 }
 
 async fn handle_nodes(
@@ -138,7 +147,7 @@ async fn handle_nodes(
         log::error!("Dashboard nodes error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(Json(serde_json::to_value(nodes).unwrap()))
+    to_json(nodes)
 }
 
 async fn handle_throughput(
@@ -153,7 +162,7 @@ async fn handle_throughput(
             log::error!("Dashboard throughput error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(serde_json::to_value(buckets).unwrap()))
+    to_json(buckets)
 }
 
 async fn handle_packet_throughput(
@@ -174,7 +183,7 @@ async fn handle_packet_throughput(
             log::error!("Dashboard packet throughput error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(serde_json::to_value(buckets).unwrap()))
+    to_json(buckets)
 }
 
 async fn handle_rssi(
@@ -186,7 +195,7 @@ async fn handle_rssi(
         log::error!("Dashboard RSSI error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(Json(serde_json::to_value(buckets).unwrap()))
+    to_json(buckets)
 }
 
 async fn handle_snr(
@@ -198,7 +207,7 @@ async fn handle_snr(
         log::error!("Dashboard SNR error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(Json(serde_json::to_value(buckets).unwrap()))
+    to_json(buckets)
 }
 
 async fn handle_hops(
@@ -213,7 +222,7 @@ async fn handle_hops(
             log::error!("Dashboard hops error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(serde_json::to_value(buckets).unwrap()))
+    to_json(buckets)
 }
 
 async fn handle_positions(
@@ -223,7 +232,7 @@ async fn handle_positions(
         log::error!("Dashboard positions error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    Ok(Json(serde_json::to_value(positions).unwrap()))
+    to_json(positions)
 }
 
 async fn handle_queue(

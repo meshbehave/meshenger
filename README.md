@@ -116,7 +116,7 @@ units = "metric"                 # or "imperial"
 ```toml
 [dashboard]
 enabled = true
-port = 9000          # HTTP port for the web dashboard
+bind_address = "0.0.0.0:9000"   # Address for the dashboard web server
 ```
 
 Run `cd web && npm run build` once to build the frontend, then access the dashboard at `http://localhost:9000`. For development, run `cd web && npm run dev` for hot-reload at `:5173` with API proxy to `:9000`.

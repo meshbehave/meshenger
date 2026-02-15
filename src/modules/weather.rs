@@ -114,10 +114,37 @@ impl Module for WeatherModule {
             self.wind_unit(),
         );
 
-        let resp = reqwest::get(&url).await?;
+        let resp = reqwest::get(&url).await.map_err(|e| {
+            log::error!("Weather API request failed: {}", e);
+            e
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            log::error!("Weather API returned HTTP {}", status);
+            return Ok(Some(vec![Response {
+                text: format!("Weather unavailable (HTTP {})", status.as_u16()),
+                destination: Destination::Sender,
+                channel: ctx.channel,
+                reply_id: None,
+            }]));
+        }
+
         let json: serde_json::Value = resp.json().await?;
 
-        let current = &json["current"];
+        let current = match json.get("current") {
+            Some(c) if c.is_object() => c,
+            _ => {
+                log::error!("Weather API response missing 'current' object: {}", json);
+                return Ok(Some(vec![Response {
+                    text: "Weather unavailable (bad API response)".to_string(),
+                    destination: Destination::Sender,
+                    channel: ctx.channel,
+                    reply_id: None,
+                }]));
+            }
+        };
+
         let temp = current["temperature_2m"].as_f64().unwrap_or(0.0);
         let humidity = current["relative_humidity_2m"].as_f64().unwrap_or(0.0);
         let weather_code = current["weather_code"].as_u64().unwrap_or(0);
@@ -142,5 +169,53 @@ impl Module for WeatherModule {
             channel: ctx.channel,
             reply_id: None,
         }]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wmo_codes() {
+        assert_eq!(wmo_code_to_description(0), "Clear sky");
+        assert_eq!(wmo_code_to_description(1), "Mainly clear");
+        assert_eq!(wmo_code_to_description(2), "Partly cloudy");
+        assert_eq!(wmo_code_to_description(3), "Overcast");
+        assert_eq!(wmo_code_to_description(45), "Foggy");
+        assert_eq!(wmo_code_to_description(48), "Foggy");
+        assert_eq!(wmo_code_to_description(61), "Rain");
+        assert_eq!(wmo_code_to_description(80), "Rain showers");
+        assert_eq!(wmo_code_to_description(81), "Rain showers");
+        assert_eq!(wmo_code_to_description(82), "Rain showers");
+        assert_eq!(wmo_code_to_description(95), "Thunderstorm");
+        assert_eq!(wmo_code_to_description(96), "Thunderstorm w/ hail");
+        assert_eq!(wmo_code_to_description(999), "Unknown");
+    }
+
+    #[test]
+    fn test_metric_units() {
+        let module = WeatherModule::new(25.0, 121.0, "metric".to_string());
+        assert_eq!(module.temperature_unit(), "celsius");
+        assert_eq!(module.temp_symbol(), "°C");
+        assert_eq!(module.wind_unit(), "kmh");
+        assert_eq!(module.wind_symbol(), "km/h");
+    }
+
+    #[test]
+    fn test_imperial_units() {
+        let module = WeatherModule::new(25.0, 121.0, "imperial".to_string());
+        assert_eq!(module.temperature_unit(), "fahrenheit");
+        assert_eq!(module.temp_symbol(), "°F");
+        assert_eq!(module.wind_unit(), "mph");
+        assert_eq!(module.wind_symbol(), "mph");
+    }
+
+    #[test]
+    fn test_module_metadata() {
+        let module = WeatherModule::new(25.0, 121.0, "metric".to_string());
+        assert_eq!(module.name(), "weather");
+        assert_eq!(module.commands(), &["weather"]);
+        assert_eq!(module.scope(), CommandScope::Both);
     }
 }

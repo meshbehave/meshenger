@@ -564,9 +564,21 @@ impl Db {
             "strftime('%Y-%m-%d %H:00', timestamp, 'unixepoch')"
         };
 
+        const VALID_PACKET_TYPES: &[&str] = &[
+            "text", "position", "telemetry", "nodeinfo",
+            "traceroute", "neighborinfo", "routing", "other",
+        ];
+
         let type_clause = match packet_types {
             Some(types) if !types.is_empty() => {
-                let placeholders: Vec<String> = types.iter().map(|t| format!("'{}'", t.replace('\'', "''"))).collect();
+                let safe: Vec<&&str> = types
+                    .iter()
+                    .filter_map(|t| VALID_PACKET_TYPES.iter().find(|&&v| v == t.as_str()))
+                    .collect();
+                if safe.is_empty() {
+                    return Ok(vec![]);
+                }
+                let placeholders: Vec<String> = safe.iter().map(|t| format!("'{}'", t)).collect();
                 format!(" AND packet_type IN ({})", placeholders.join(","))
             }
             _ => String::new(),
@@ -1140,5 +1152,22 @@ mod tests {
         let overview = db.dashboard_overview(24, MqttFilter::All, "Test").unwrap();
         assert_eq!(overview.messages_in, 1); // Only text
         assert_eq!(overview.packets_in, 3); // All types
+    }
+
+    #[test]
+    fn test_packet_throughput_rejects_invalid_types() {
+        let db = setup_db();
+        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
+
+        // Invalid type names should be silently filtered out, returning empty
+        let types = vec!["'; DROP TABLE packets; --".to_string()];
+        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, Some(&types)).unwrap();
+        assert!(buckets.is_empty());
+
+        // Mix of valid and invalid — only valid types are used
+        let types = vec!["text".to_string(), "fake_injection".to_string()];
+        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, Some(&types)).unwrap();
+        let total_in: u64 = buckets.iter().map(|b| b.incoming).sum();
+        assert_eq!(total_in, 1);
     }
 }

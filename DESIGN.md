@@ -442,7 +442,7 @@ Components:
 ```toml
 [dashboard]
 enabled = true
-port = 9000
+bind_address = "0.0.0.0:9000"
 ```
 
 ## Configuration (`config.example.toml`)

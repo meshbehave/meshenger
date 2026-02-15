@@ -42,3 +42,16 @@ impl Module for HelpModule {
         }]))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_help_module_metadata() {
+        let module = HelpModule;
+        assert_eq!(module.name(), "help");
+        assert_eq!(module.commands(), &["help"]);
+        assert_eq!(module.scope(), CommandScope::Both);
+    }
+}
