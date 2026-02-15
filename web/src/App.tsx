@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type { Overview, DashboardNode, ThroughputBucket, DistributionBucket, QueueDepth, MqttFilterValue, HoursValue } from './types';
+import type { Overview, DashboardNode, ThroughputBucket, DistributionBucket, QueueDepth, MqttFilterValue, HoursValue, PacketTypeFilter } from './types';
 import { MqttFilter } from './components/MqttFilter';
 import { TimeRangeSelector } from './components/TimeRangeSelector';
 import { OverviewCards } from './components/OverviewCards';
@@ -15,6 +15,7 @@ const REFRESH_INTERVAL = 30_000;
 function App() {
   const [mqtt, setMqtt] = useState<MqttFilterValue>('all');
   const [hours, setHours] = useState<HoursValue>(24);
+  const [packetFilter, setPacketFilter] = useState<PacketTypeFilter>('all');
   const [overview, setOverview] = useState<Overview | null>(null);
   const [nodes, setNodes] = useState<DashboardNode[] | null>(null);
   const [throughput, setThroughput] = useState<ThroughputBucket[] | null>(null);
@@ -38,7 +39,7 @@ function App() {
       fetch(`/api/overview?${p}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/nodes?${mqttOnly}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/throughput?${p}`).then((r) => r.ok ? r.json() : null),
-      fetch(`/api/packet-throughput?${p}`).then((r) => r.ok ? r.json() : null),
+      fetch(`/api/packet-throughput?${p}${packetFilter !== 'all' ? `&types=${packetFilter}` : ''}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/rssi?${p}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/snr?${p}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/hops?${p}`).then((r) => r.ok ? r.json() : null),
@@ -52,7 +53,7 @@ function App() {
     setSnr(sn);
     setHops(hp);
     setQueue(qu);
-  }, [params, mqtt]);
+  }, [params, mqtt, packetFilter]);
 
   useEffect(() => {
     fetchAll();
@@ -75,7 +76,7 @@ function App() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <ThroughputChart data={throughput} />
-          <PacketThroughputChart data={packetThroughput} />
+          <PacketThroughputChart data={packetThroughput} packetFilter={packetFilter} onPacketFilterChange={setPacketFilter} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

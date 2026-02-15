@@ -1,12 +1,11 @@
-import { useState } from 'react';
 import { Line } from 'react-chartjs-2';
-import type { ThroughputBucket } from '../types';
+import type { ThroughputBucket, PacketTypeFilter } from '../types';
 
 interface Props {
   data: ThroughputBucket[] | null;
+  packetFilter: PacketTypeFilter;
+  onPacketFilterChange: (f: PacketTypeFilter) => void;
 }
-
-type PacketTypeFilter = 'all' | 'text' | 'position' | 'telemetry' | 'other';
 
 const filterOptions: { value: PacketTypeFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -16,8 +15,7 @@ const filterOptions: { value: PacketTypeFilter; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-export function PacketThroughputChart({ data }: Props) {
-  const [_filter, setFilter] = useState<PacketTypeFilter>('all');
+export function PacketThroughputChart({ data, packetFilter, onPacketFilterChange }: Props) {
 
   if (!data || data.length === 0) {
     return (
@@ -62,9 +60,9 @@ export function PacketThroughputChart({ data }: Props) {
           {filterOptions.map((opt) => (
             <button
               key={opt.value}
-              onClick={() => setFilter(opt.value)}
+              onClick={() => onPacketFilterChange(opt.value)}
               className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-                _filter === opt.value
+                packetFilter === opt.value
                   ? 'bg-violet-600 text-white'
                   : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
               }`}
