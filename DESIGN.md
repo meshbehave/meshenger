@@ -270,7 +270,7 @@ Key queries:
 - `mark_mail_read(id)` — mark mail as read
 - `delete_mail(id, owner)` — delete mail owned by node
 - `dashboard_overview(hours, filter, bot_name)` — message/packet counts for dashboard
-- `dashboard_nodes(filter)` — node list with via_mqtt for dashboard
+- `dashboard_nodes(hours, filter)` — node list with via_mqtt and per-node hop summary for dashboard
 - `dashboard_throughput(hours, filter)` — text message throughput (smart bucketing)
 - `dashboard_packet_throughput(hours, filter, types)` — all packet type throughput
 
@@ -434,7 +434,7 @@ Components:
 - **PacketThroughputChart** — all packet types with type toggle filters (All/Text/Position/Telemetry/Other)
 - **RssiChart / SnrChart** — RF quality distribution bar charts
 - **HopsChart** — hop count doughnut chart
-- **NodeTable** — sortable table with MQTT/RF source badges, filterable by MQTT status
+- **NodeTable** — sortable table with MQTT/RF source badges and per-node hop summary (last/avg/min), filterable by MQTT status
 - **MqttFilter** — global toggle for MQTT vs local RF filtering
 
 ### Configuration

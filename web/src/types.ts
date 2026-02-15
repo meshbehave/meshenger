@@ -12,9 +12,14 @@ export interface DashboardNode {
   short_name: string;
   long_name: string;
   last_seen: number;
+  last_rf_seen: number | null;
   latitude: number | null;
   longitude: number | null;
   via_mqtt: boolean;
+  last_hop: number | null;
+  min_hop: number | null;
+  avg_hop: number | null;
+  hop_samples: number;
 }
 
 export interface ThroughputBucket {

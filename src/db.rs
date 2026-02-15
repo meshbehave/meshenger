@@ -48,9 +48,14 @@ pub struct DashboardNode {
     pub short_name: String,
     pub long_name: String,
     pub last_seen: i64,
+    pub last_rf_seen: Option<i64>,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
     pub via_mqtt: bool,
+    pub last_hop: Option<u32>,
+    pub min_hop: Option<u32>,
+    pub avg_hop: Option<f64>,
+    pub hop_samples: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -138,7 +143,18 @@ impl Db {
                 to_node    INTEGER NOT NULL,
                 body       TEXT NOT NULL,
                 read       INTEGER NOT NULL DEFAULT 0
-            );",
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_packets_rf_hops_lookup
+            ON packets (from_node, direction, via_mqtt, timestamp DESC, id DESC)
+            WHERE hop_count IS NOT NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_packets_rf_last_seen
+            ON packets (from_node, direction, via_mqtt, timestamp DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_packets_rf_hops_stats
+            ON packets (direction, via_mqtt, from_node, hop_count)
+            WHERE hop_count IS NOT NULL;",
         )?;
 
         Ok(())
@@ -479,33 +495,79 @@ impl Db {
         })
     }
 
-    pub fn dashboard_nodes(&self, filter: MqttFilter) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_nodes(&self, hours: u32, filter: MqttFilter) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
+        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
 
         let where_clause = match filter {
             MqttFilter::All => String::new(),
-            MqttFilter::LocalOnly => " WHERE via_mqtt = 0".to_string(),
-            MqttFilter::MqttOnly => " WHERE via_mqtt = 1".to_string(),
+            MqttFilter::LocalOnly => " WHERE n.via_mqtt = 0".to_string(),
+            MqttFilter::MqttOnly => " WHERE n.via_mqtt = 1".to_string(),
         };
 
         let query = format!(
-            "SELECT node_id, short_name, long_name, last_seen, latitude, longitude, via_mqtt
-             FROM nodes{} ORDER BY last_seen DESC",
+            "WITH rf_last AS (
+                SELECT
+                    from_node,
+                    timestamp,
+                    ROW_NUMBER() OVER (PARTITION BY from_node ORDER BY timestamp DESC, id DESC) AS rn
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0
+             ),
+             rf_hops AS (
+                SELECT
+                    from_node,
+                    hop_count,
+                    ROW_NUMBER() OVER (PARTITION BY from_node ORDER BY timestamp DESC, id DESC) AS rn
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0 AND hop_count IS NOT NULL
+             ),
+             rf_stats AS (
+                SELECT
+                    from_node,
+                    MIN(hop_count) AS min_hop,
+                    AVG(hop_count) AS avg_hop,
+                    COUNT(*) AS hop_samples
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0 AND hop_count IS NOT NULL
+                  AND timestamp > ?1
+                GROUP BY from_node
+             )
+             SELECT
+                n.node_id, n.short_name, n.long_name, n.last_seen, lr.timestamp AS last_rf_seen, n.latitude, n.longitude, n.via_mqtt,
+                lh.hop_count AS last_hop,
+                rs.min_hop,
+                rs.avg_hop,
+                COALESCE(rs.hop_samples, 0) AS hop_samples
+             FROM nodes n
+             LEFT JOIN rf_last lr ON lr.from_node = n.node_id AND lr.rn = 1
+             LEFT JOIN rf_hops lh ON lh.from_node = n.node_id AND lh.rn = 1
+             LEFT JOIN rf_stats rs ON rs.from_node = n.node_id
+             {} ORDER BY n.last_seen DESC",
             where_clause
         );
         let mut stmt = conn.prepare(&query)?;
         let nodes = stmt
-            .query_map([], |row| {
+            .query_map(params![since], |row| {
                 let nid: i64 = row.get(0)?;
-                let via_mqtt_val: i64 = row.get(6)?;
+                let via_mqtt_val: i64 = row.get(7)?;
+                let last_hop: Option<i64> = row.get(8)?;
+                let min_hop: Option<i64> = row.get(9)?;
+                let avg_hop: Option<f64> = row.get(10)?;
+                let hop_samples: i64 = row.get(11)?;
                 Ok(DashboardNode {
                     node_id: format!("!{:08x}", nid as u32),
                     short_name: row.get(1)?,
                     long_name: row.get(2)?,
                     last_seen: row.get(3)?,
-                    latitude: row.get(4)?,
-                    longitude: row.get(5)?,
+                    last_rf_seen: row.get(4)?,
+                    latitude: row.get(5)?,
+                    longitude: row.get(6)?,
                     via_mqtt: via_mqtt_val != 0,
+                    last_hop: last_hop.map(|h| h as u32),
+                    min_hop: min_hop.map(|h| h as u32),
+                    avg_hop,
+                    hop_samples: hop_samples as u32,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -696,24 +758,67 @@ impl Db {
     pub fn dashboard_positions(&self) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT node_id, short_name, long_name, last_seen, latitude, longitude, via_mqtt
-             FROM nodes
-             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-               AND (latitude != 0.0 OR longitude != 0.0)
-             ORDER BY last_seen DESC",
+            "WITH rf_last AS (
+                SELECT
+                    from_node,
+                    timestamp,
+                    ROW_NUMBER() OVER (PARTITION BY from_node ORDER BY timestamp DESC, id DESC) AS rn
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0
+             ),
+             rf_hops AS (
+                SELECT
+                    from_node,
+                    hop_count,
+                    ROW_NUMBER() OVER (PARTITION BY from_node ORDER BY timestamp DESC, id DESC) AS rn
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0 AND hop_count IS NOT NULL
+             ),
+             rf_stats AS (
+                SELECT
+                    from_node,
+                    MIN(hop_count) AS min_hop,
+                    AVG(hop_count) AS avg_hop,
+                    COUNT(*) AS hop_samples
+                FROM packets
+                WHERE direction = 'in' AND via_mqtt = 0 AND hop_count IS NOT NULL
+                GROUP BY from_node
+             )
+             SELECT
+                n.node_id, n.short_name, n.long_name, n.last_seen, lr.timestamp AS last_rf_seen, n.latitude, n.longitude, n.via_mqtt,
+                lh.hop_count AS last_hop,
+                rs.min_hop,
+                rs.avg_hop,
+                COALESCE(rs.hop_samples, 0) AS hop_samples
+             FROM nodes n
+             LEFT JOIN rf_last lr ON lr.from_node = n.node_id AND lr.rn = 1
+             LEFT JOIN rf_hops lh ON lh.from_node = n.node_id AND lh.rn = 1
+             LEFT JOIN rf_stats rs ON rs.from_node = n.node_id
+             WHERE n.latitude IS NOT NULL AND n.longitude IS NOT NULL
+               AND (n.latitude != 0.0 OR n.longitude != 0.0)
+             ORDER BY n.last_seen DESC",
         )?;
         let nodes = stmt
             .query_map([], |row| {
                 let nid: i64 = row.get(0)?;
-                let via_mqtt_val: i64 = row.get(6)?;
+                let via_mqtt_val: i64 = row.get(7)?;
+                let last_hop: Option<i64> = row.get(8)?;
+                let min_hop: Option<i64> = row.get(9)?;
+                let avg_hop: Option<f64> = row.get(10)?;
+                let hop_samples: i64 = row.get(11)?;
                 Ok(DashboardNode {
                     node_id: format!("!{:08x}", nid as u32),
                     short_name: row.get(1)?,
                     long_name: row.get(2)?,
                     last_seen: row.get(3)?,
-                    latitude: row.get(4)?,
-                    longitude: row.get(5)?,
+                    last_rf_seen: row.get(4)?,
+                    latitude: row.get(5)?,
+                    longitude: row.get(6)?,
                     via_mqtt: via_mqtt_val != 0,
+                    last_hop: last_hop.map(|h| h as u32),
+                    min_hop: min_hop.map(|h| h as u32),
+                    avg_hop,
+                    hop_samples: hop_samples as u32,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -992,11 +1097,11 @@ mod tests {
         let db = setup_db();
 
         db.upsert_node(0x12345678, "ABCD", "Alice", false).unwrap();
-        let nodes = db.dashboard_nodes(MqttFilter::All).unwrap();
+        let nodes = db.dashboard_nodes(24, MqttFilter::All).unwrap();
         assert!(!nodes[0].via_mqtt);
 
         db.upsert_node(0x12345678, "ABCD", "Alice", true).unwrap();
-        let nodes = db.dashboard_nodes(MqttFilter::All).unwrap();
+        let nodes = db.dashboard_nodes(24, MqttFilter::All).unwrap();
         assert!(nodes[0].via_mqtt);
     }
 
@@ -1033,12 +1138,19 @@ mod tests {
         let db = setup_db();
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
         db.update_position(0xAAAAAAAA, 25.0, 121.0).unwrap();
+        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(2), Some(3), "text").unwrap();
+        db.log_packet(0xAAAAAAAA, None, 0, "Again", "in", false, Some(-79), Some(5.2), Some(1), Some(3), "text").unwrap();
 
-        let nodes = db.dashboard_nodes(MqttFilter::All).unwrap();
+        let nodes = db.dashboard_nodes(24, MqttFilter::All).unwrap();
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].node_id, "!aaaaaaaa");
         assert_eq!(nodes[0].latitude, Some(25.0));
         assert!(!nodes[0].via_mqtt);
+        assert_eq!(nodes[0].last_hop, Some(1));
+        assert_eq!(nodes[0].min_hop, Some(1));
+        assert_eq!(nodes[0].avg_hop, Some(1.5));
+        assert_eq!(nodes[0].hop_samples, 2);
+        assert!(nodes[0].last_rf_seen.is_some());
     }
 
     #[test]
@@ -1047,16 +1159,48 @@ mod tests {
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
         db.upsert_node(0xBBBBBBBB, "B", "Bob", true).unwrap();
 
-        let all = db.dashboard_nodes(MqttFilter::All).unwrap();
+        let all = db.dashboard_nodes(24, MqttFilter::All).unwrap();
         assert_eq!(all.len(), 2);
 
-        let local = db.dashboard_nodes(MqttFilter::LocalOnly).unwrap();
+        let local = db.dashboard_nodes(24, MqttFilter::LocalOnly).unwrap();
         assert_eq!(local.len(), 1);
         assert_eq!(local[0].node_id, "!aaaaaaaa");
 
-        let mqtt = db.dashboard_nodes(MqttFilter::MqttOnly).unwrap();
+        let mqtt = db.dashboard_nodes(24, MqttFilter::MqttOnly).unwrap();
         assert_eq!(mqtt.len(), 1);
         assert_eq!(mqtt[0].node_id, "!bbbbbbbb");
+    }
+
+    #[test]
+    fn test_dashboard_nodes_hop_stats_respect_time_window() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+
+        db.log_packet(0xAAAAAAAA, None, 0, "old", "in", false, Some(-90), Some(2.0), Some(3), Some(3), "text").unwrap();
+        db.log_packet(0xAAAAAAAA, None, 0, "new", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
+
+        {
+            let conn = db.conn.lock().unwrap();
+            let old_ts = Utc::now().timestamp() - (48 * 3600);
+            conn.execute(
+                "UPDATE packets SET timestamp = ?1 WHERE text = 'old'",
+                params![old_ts],
+            ).unwrap();
+        }
+
+        let nodes_24h = db.dashboard_nodes(24, MqttFilter::All).unwrap();
+        assert_eq!(nodes_24h.len(), 1);
+        assert_eq!(nodes_24h[0].last_hop, Some(1));
+        assert_eq!(nodes_24h[0].min_hop, Some(1));
+        assert_eq!(nodes_24h[0].avg_hop, Some(1.0));
+        assert_eq!(nodes_24h[0].hop_samples, 1);
+
+        let nodes_all = db.dashboard_nodes(0, MqttFilter::All).unwrap();
+        assert_eq!(nodes_all.len(), 1);
+        assert_eq!(nodes_all[0].last_hop, Some(1));
+        assert_eq!(nodes_all[0].min_hop, Some(1));
+        assert_eq!(nodes_all[0].avg_hop, Some(2.0));
+        assert_eq!(nodes_all[0].hop_samples, 2);
     }
 
     #[test]

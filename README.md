@@ -26,7 +26,7 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 
 **Tracks everything** — Every packet type (text, position, telemetry, traceroute, etc.) is logged with RF metadata. Nodes are tagged as MQTT or local RF based on their transport method.
 
-**Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, node table with MQTT/RF badges, configurable time ranges (1d to 1y), and MQTT filtering.
+**Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, node table/map with MQTT/RF badges and per-node hop summary (last/avg/min), configurable time ranges (1d to 1y), and MQTT filtering.
 
 **Holds mail** — Mesh nodes come and go. Meshenger stores messages for offline users and notifies them when they reconnect. Recipients can be specified by hex node ID (`!ebb0a1ce`), decimal ID, or name.
 

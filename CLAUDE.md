@@ -78,7 +78,7 @@ An optional web dashboard (`src/dashboard.rs`) serves metrics via an axum HTTP s
 
 API endpoints:
 - `GET /api/overview?hours=24` — node count, message in/out (text only), packet in/out (all types), bot name
-- `GET /api/nodes?mqtt=all|local|mqtt_only` — node list with MQTT/RF distinction
+- `GET /api/nodes?hours=24&mqtt=all|local|mqtt_only` — node list with MQTT/RF distinction and per-node hop summary
 - `GET /api/throughput?hours=24&mqtt=all` — text message throughput (hourly or daily buckets)
 - `GET /api/packet-throughput?hours=24&mqtt=all&types=text,position,telemetry` — all packet type throughput with optional type filter
 - `GET /api/rssi?hours=24&mqtt=all` — RSSI distribution
@@ -91,7 +91,7 @@ Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket 
 
 **Real-time updates**: The bot sends notifications via a `tokio::sync::broadcast` channel whenever packets arrive or messages are sent. The dashboard exposes this as an SSE endpoint (`/api/events`). The frontend connects via `EventSource` and re-fetches data on each `refresh` event. Polling every 30s remains as a fallback.
 
-**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, node map (Leaflet with MQTT/RF marker distinction), sortable node table (with MQTT/RF badges), MQTT filter toggle.
+**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, node map (Leaflet with MQTT/RF marker distinction + per-node hop summary), sortable node table (with MQTT/RF badges + per-node hop summary), MQTT filter toggle.
 
 **Dev workflow**: Run `cd web && npm run dev` (Vite at :5173 with proxy to :9000) alongside `cargo run`. **Prod workflow**: `cd web && npm run build` then `cargo run` — axum serves both API and SPA from port 9000.
 
@@ -102,6 +102,10 @@ SQLite via `rusqlite` with bundled SQLite. Three tables: `nodes`, `packets`, `ma
 The `packets` table includes a `packet_type` column (`text`, `position`, `telemetry`, `nodeinfo`, `traceroute`, `neighborinfo`, `routing`, `other`) and RF metadata columns (`via_mqtt`, `rssi`, `snr`, `hop_count`, `hop_start`). All packet types from the Meshtastic node are logged, not just text messages. `log_packet()` accepts these fields — outgoing messages pass `"text"`/`false`/`None`.
 
 The `nodes` table includes a `via_mqtt` column tracking whether a node was last seen via MQTT or local RF. This is populated from the `NodeInfo` protobuf's `via_mqtt` field and carried through `MeshEvent::NodeDiscovered` (including deferred events during the startup grace period).
+
+Dashboard node rows include derived hop summary fields from RF packet history:
+- `last_hop` — latest known inbound RF hop count for the node (not time-windowed)
+- `min_hop` / `avg_hop` — inbound RF hop stats over the selected dashboard `hours` window (or all-time when `hours=0`)
 
 ### Configuration
 

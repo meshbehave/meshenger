@@ -36,6 +36,15 @@ function formatLastSeen(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+function formatHopSummary(lastHop: number | null, avgHop: number | null, minHop: number | null): string {
+  if (lastHop == null && avgHop == null && minHop == null) return '—';
+  const parts: string[] = [];
+  if (lastHop != null) parts.push(`last ${lastHop}`);
+  if (avgHop != null) parts.push(`avg ${avgHop.toFixed(1)}`);
+  if (minHop != null) parts.push(`min ${minHop}`);
+  return parts.join(' / ');
+}
+
 interface Props {
   nodes: DashboardNode[] | null;
 }
@@ -82,6 +91,8 @@ export function NodeMap({ nodes }: Props) {
                   {node.node_id}
                   <br />
                   {node.via_mqtt ? 'MQTT' : 'RF'} &middot; {formatLastSeen(node.last_seen)}
+                  <br />
+                  Hops: {formatHopSummary(node.last_hop, node.avg_hop, node.min_hop)}
                 </div>
               </Popup>
             </Marker>

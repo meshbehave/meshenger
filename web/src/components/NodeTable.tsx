@@ -5,7 +5,7 @@ interface Props {
   nodes: DashboardNode[] | null;
 }
 
-type SortKey = 'node_id' | 'long_name' | 'last_seen' | 'via_mqtt';
+type SortKey = 'node_id' | 'long_name' | 'last_seen' | 'last_rf_seen' | 'via_mqtt' | 'last_hop' | 'hop_samples';
 
 function formatAgo(timestamp: number): string {
   const secs = Math.floor(Date.now() / 1000) - timestamp;
@@ -21,6 +21,15 @@ function SourceBadge({ viaMqtt }: { viaMqtt: boolean }) {
   ) : (
     <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-emerald-900/50 text-emerald-300">RF</span>
   );
+}
+
+function formatHopSummary(lastHop: number | null, avgHop: number | null, minHop: number | null): string {
+  if (lastHop == null && avgHop == null && minHop == null) return '—';
+  const parts: string[] = [];
+  if (lastHop != null) parts.push(`last ${lastHop}`);
+  if (avgHop != null) parts.push(`avg ${avgHop.toFixed(1)}`);
+  if (minHop != null) parts.push(`min ${minHop}`);
+  return parts.join(' / ');
 }
 
 export function NodeTable({ nodes }: Props) {
@@ -51,6 +60,19 @@ export function NodeTable({ nodes }: Props) {
       const vb = b.via_mqtt ? 1 : 0;
       return sortAsc ? va - vb : vb - va;
     }
+    if (sortKey === 'last_hop') {
+      const va = a.last_hop ?? -1;
+      const vb = b.last_hop ?? -1;
+      return sortAsc ? va - vb : vb - va;
+    }
+    if (sortKey === 'last_rf_seen') {
+      const va = a.last_rf_seen ?? 0;
+      const vb = b.last_rf_seen ?? 0;
+      return sortAsc ? va - vb : vb - va;
+    }
+    if (sortKey === 'hop_samples') {
+      return sortAsc ? a.hop_samples - b.hop_samples : b.hop_samples - a.hop_samples;
+    }
     const va = a[sortKey];
     const vb = b[sortKey];
     if (typeof va === 'string' && typeof vb === 'string') {
@@ -79,6 +101,15 @@ export function NodeTable({ nodes }: Props) {
             <th className="text-left py-2 px-2 cursor-pointer" onClick={() => handleSort('last_seen')}>
               Last Seen{arrow('last_seen')}
             </th>
+            <th className="text-left py-2 px-2 cursor-pointer" onClick={() => handleSort('last_rf_seen')}>
+              Last RF{arrow('last_rf_seen')}
+            </th>
+            <th className="text-left py-2 px-2 cursor-pointer" onClick={() => handleSort('last_hop')}>
+              Hops{arrow('last_hop')}
+            </th>
+            <th className="text-left py-2 px-2 cursor-pointer" onClick={() => handleSort('hop_samples')}>
+              Samples{arrow('hop_samples')}
+            </th>
             <th className="text-left py-2 px-2">Position</th>
           </tr>
         </thead>
@@ -89,6 +120,13 @@ export function NodeTable({ nodes }: Props) {
               <td className="py-2 px-2">{node.long_name || node.short_name || '—'}</td>
               <td className="py-2 px-2"><SourceBadge viaMqtt={node.via_mqtt} /></td>
               <td className="py-2 px-2 text-slate-400">{formatAgo(node.last_seen)}</td>
+              <td className="py-2 px-2 text-slate-400">
+                {node.last_rf_seen != null ? formatAgo(node.last_rf_seen) : '—'}
+              </td>
+              <td className="py-2 px-2 text-slate-400">
+                {formatHopSummary(node.last_hop, node.avg_hop, node.min_hop)}
+              </td>
+              <td className="py-2 px-2 text-slate-400">{node.hop_samples}</td>
               <td className="py-2 px-2 text-slate-400">
                 {node.latitude != null && node.longitude != null
                   ? `${node.latitude.toFixed(4)}, ${node.longitude.toFixed(4)}`

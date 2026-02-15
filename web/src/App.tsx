@@ -35,10 +35,9 @@ function App() {
 
   const fetchAll = useCallback(async () => {
     const p = params.toString();
-    const mqttOnly = new URLSearchParams({ mqtt }).toString();
     const [ov, nd, tp, pt, rs, sn, hp, qu] = await Promise.all([
       fetch(`/api/overview?${p}`).then((r) => r.ok ? r.json() : null),
-      fetch(`/api/nodes?${mqttOnly}`).then((r) => r.ok ? r.json() : null),
+      fetch(`/api/nodes?${p}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/throughput?${p}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/packet-throughput?${p}${packetFilter !== 'all' ? `&types=${packetFilter}` : ''}`).then((r) => r.ok ? r.json() : null),
       fetch(`/api/rssi?${p}`).then((r) => r.ok ? r.json() : null),
@@ -54,7 +53,7 @@ function App() {
     setSnr(sn);
     setHops(hp);
     setQueue(qu);
-  }, [params, mqtt, packetFilter]);
+  }, [params, packetFilter]);
 
   useEffect(() => {
     fetchAll();

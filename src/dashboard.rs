@@ -35,12 +35,6 @@ struct AppState {
     sse_tx: tokio::sync::broadcast::Sender<()>,
 }
 
-#[derive(Deserialize)]
-struct MqttParam {
-    #[serde(default = "default_mqtt")]
-    mqtt: String,
-}
-
 fn default_mqtt() -> String {
     "all".to_string()
 }
@@ -155,10 +149,10 @@ async fn handle_overview(
 
 async fn handle_nodes(
     State(state): State<AppState>,
-    Query(params): Query<MqttParam>,
+    Query(params): Query<HoursParam>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filter = MqttFilter::from_str(&params.mqtt);
-    let nodes = state.db.dashboard_nodes(filter).map_err(|e| {
+    let nodes = state.db.dashboard_nodes(params.hours, filter).map_err(|e| {
         log::error!("Dashboard nodes error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
