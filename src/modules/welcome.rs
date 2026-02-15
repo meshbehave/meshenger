@@ -126,6 +126,7 @@ impl Module for WelcomeModule {
                         text,
                         destination: Destination::Node(*node_id),
                         channel: 0,
+                        reply_id: None,
                     }]))
                 } else {
                     Ok(None)

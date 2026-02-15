@@ -50,6 +50,7 @@ impl Module for MailModule {
             text,
             destination: Destination::Sender,
             channel: ctx.channel,
+            reply_id: None,
         }]))
     }
 
@@ -71,6 +72,7 @@ impl Module for MailModule {
                         text,
                         destination: Destination::Node(*node_id),
                         channel: 0,
+                        reply_id: None,
                     }]))
                 } else {
                     Ok(None)
@@ -161,6 +163,7 @@ mod tests {
             hop_count: 1,
             hop_limit: 3,
             via_mqtt: false,
+            packet_id: 0,
         }
     }
 

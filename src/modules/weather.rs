@@ -140,6 +140,7 @@ impl Module for WeatherModule {
             text,
             destination: Destination::Sender,
             channel: ctx.channel,
+            reply_id: None,
         }]))
     }
 }

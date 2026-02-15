@@ -37,6 +37,8 @@ pub struct MessageContext {
     pub hop_count: u32,
     pub hop_limit: u32,
     pub via_mqtt: bool,
+    /// The incoming mesh packet's unique ID (used for reply threading)
+    pub packet_id: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +46,8 @@ pub struct Response {
     pub text: String,
     pub destination: Destination,
     pub channel: u32,
+    /// When set, the outgoing message references this incoming packet ID
+    pub reply_id: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

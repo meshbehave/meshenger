@@ -28,6 +28,8 @@ struct OutgoingMeshMessage {
     to_node: Option<u32>,
     /// Meshtastic channel index for DB logging
     mesh_channel: u32,
+    /// If set, this message is a reply to the incoming packet with this ID
+    reply_id: Option<u32>,
 }
 
 const MAX_MESSAGE_LEN: usize = 220;
@@ -185,7 +187,7 @@ impl Bot {
             };
 
             let chunks = chunk_message(&response.text);
-            for chunk in chunks {
+            for (i, chunk) in chunks.into_iter().enumerate() {
                 self.queue_message(OutgoingMeshMessage {
                     text: chunk,
                     destination,
@@ -193,6 +195,8 @@ impl Bot {
                     from_node: my_node_id,
                     to_node,
                     mesh_channel: response.channel,
+                    // Only the first chunk carries the reply_id
+                    reply_id: if i == 0 { response.reply_id } else { None },
                 });
             }
         }
@@ -380,16 +384,26 @@ impl Bot {
             "text",
         );
 
-        if let Err(e) = api
-            .send_text(
+        let result = if msg.reply_id.is_some() {
+            let byte_data = msg.text.into_bytes().into();
+            api.send_mesh_packet(
                 router,
-                msg.text,
+                byte_data,
+                protobufs::PortNum::TextMessageApp,
                 msg.destination,
-                true,
                 msg.channel,
+                true,  // want_ack
+                false, // want_response
+                true,  // echo_response
+                msg.reply_id,
+                None,  // emoji
             )
             .await
-        {
+        } else {
+            api.send_text(router, msg.text, msg.destination, true, msg.channel)
+                .await
+        };
+        if let Err(e) = result {
             log::error!("Failed to send queued message: {}", e);
         }
     }
@@ -438,6 +452,7 @@ impl Bot {
             from_node: my_node_id,
             to_node: None,
             mesh_channel: msg.channel,
+            reply_id: None,
         });
     }
 
@@ -552,6 +567,7 @@ impl Bot {
             hop_count: hops,
             hop_limit: mesh_packet.hop_limit,
             via_mqtt: mesh_packet.via_mqtt,
+            packet_id: mesh_packet.id,
         };
 
         log::info!(
@@ -619,6 +635,7 @@ impl Bot {
                 text: help_text,
                 destination: Destination::Sender,
                 channel: ctx.channel,
+                reply_id: Some(ctx.packet_id),
             }];
             self.queue_responses(&ctx, &responses, my_node_id);
             return;
@@ -634,7 +651,13 @@ impl Bot {
         }
 
         match module.handle_command(command, args, &ctx, &self.db).await {
-            Ok(Some(responses)) => {
+            Ok(Some(mut responses)) => {
+                // Tag the first response as a reply to the incoming message
+                if let Some(first) = responses.first_mut() {
+                    if first.reply_id.is_none() {
+                        first.reply_id = Some(ctx.packet_id);
+                    }
+                }
                 self.queue_responses(&ctx, &responses, my_node_id);
             }
             Ok(None) => {}
@@ -789,6 +812,7 @@ impl Bot {
                         hop_count: 0,
                         hop_limit: 0,
                         via_mqtt: false,
+                        packet_id: 0,
                     };
                     self.queue_responses(&ctx, &responses, my_node_id);
                 }
@@ -925,6 +949,7 @@ mod tests {
             hop_count: 0,
             hop_limit: 0,
             via_mqtt: false,
+            packet_id: 0,
         }
     }
 
@@ -941,6 +966,7 @@ mod tests {
                 from_node: my_node_id,
                 to_node: None,
                 mesh_channel: 0,
+                reply_id: None,
             });
         }
 
@@ -965,6 +991,7 @@ mod tests {
             text: long_text.clone(),
             destination: Destination::Sender,
             channel: 0,
+            reply_id: None,
         }];
 
         bot.queue_responses(&ctx, &responses, my_node_id);
@@ -993,16 +1020,19 @@ mod tests {
                 text: "to sender".to_string(),
                 destination: Destination::Sender,
                 channel: 3,
+                reply_id: None,
             },
             Response {
                 text: "broadcast".to_string(),
                 destination: Destination::Broadcast,
                 channel: 0,
+                reply_id: None,
             },
             Response {
                 text: "to node".to_string(),
                 destination: Destination::Node(0xDEADBEEF),
                 channel: 1,
+                reply_id: None,
             },
         ];
 

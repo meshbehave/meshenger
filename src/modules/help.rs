@@ -38,6 +38,7 @@ impl Module for HelpModule {
             text: String::new(),
             destination: Destination::Sender,
             channel: ctx.channel,
+            reply_id: None,
         }]))
     }
 }

@@ -59,6 +59,7 @@ impl Module for NodeInfoModule {
             text: lines.join("\n"),
             destination: Destination::Sender,
             channel: ctx.channel,
+            reply_id: None,
         }]))
     }
 }
@@ -79,6 +80,7 @@ mod tests {
             hop_count: 1,
             hop_limit: 3,
             via_mqtt: false,
+            packet_id: 0,
         }
     }
 

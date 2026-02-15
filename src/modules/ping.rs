@@ -40,6 +40,7 @@ impl Module for PingModule {
             text,
             destination: Destination::Sender,
             channel: ctx.channel,
+            reply_id: None,
         }]))
     }
 }
@@ -60,6 +61,7 @@ mod tests {
             hop_count,
             hop_limit,
             via_mqtt,
+            packet_id: 0,
         }
     }
 
