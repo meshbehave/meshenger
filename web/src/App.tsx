@@ -9,6 +9,7 @@ import { RssiChart } from './components/RssiChart';
 import { SnrChart } from './components/SnrChart';
 import { HopChart } from './components/HopChart';
 import { NodeTable } from './components/NodeTable';
+import { NodeMap } from './components/NodeMap';
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -57,8 +58,18 @@ function App() {
 
   useEffect(() => {
     fetchAll();
+
+    // Use SSE for real-time updates, with polling as fallback
+    const es = new EventSource('/api/events');
+    es.addEventListener('refresh', () => fetchAll());
+
+    // Fallback polling in case SSE disconnects silently
     const id = setInterval(fetchAll, REFRESH_INTERVAL);
-    return () => clearInterval(id);
+
+    return () => {
+      es.close();
+      clearInterval(id);
+    };
   }, [fetchAll]);
 
   return (
@@ -87,6 +98,8 @@ function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <HopChart data={hops} />
         </div>
+
+        <NodeMap nodes={nodes} />
 
         <NodeTable nodes={nodes} />
       </main>

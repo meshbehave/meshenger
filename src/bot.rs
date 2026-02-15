@@ -32,8 +32,6 @@ struct OutgoingMeshMessage {
     reply_id: Option<u32>,
 }
 
-const MAX_MESSAGE_LEN: usize = 220;
-
 #[derive(Debug)]
 struct RouterError(String);
 
@@ -98,12 +96,6 @@ impl RateLimiter {
     }
 }
 
-/// Duration after connect during which NodeInfo events are deferred.
-/// The Meshtastic node dumps all known nodes on connect — dispatching events
-/// immediately would spam greetings. Deferred events are dispatched once after
-/// this period ends.
-const STARTUP_GRACE_PERIOD: std::time::Duration = std::time::Duration::from_secs(30);
-
 pub struct Bot {
     config: Arc<Config>,
     db: Arc<Db>,
@@ -121,6 +113,8 @@ pub struct Bot {
     outgoing_queue: Mutex<VecDeque<OutgoingMeshMessage>>,
     /// Shared counter for current queue depth (used by dashboard)
     queue_depth: Arc<AtomicUsize>,
+    /// SSE broadcast sender for real-time dashboard updates
+    sse_tx: Option<tokio::sync::broadcast::Sender<()>>,
 }
 
 impl Bot {
@@ -140,6 +134,7 @@ impl Bot {
             bridge_rx: None,
             outgoing_queue: Mutex::new(VecDeque::new()),
             queue_depth: Arc::new(AtomicUsize::new(0)),
+            sse_tx: None,
         }
     }
 
@@ -157,6 +152,19 @@ impl Bot {
         self.bridge_tx = Some(bridge_tx);
         self.bridge_rx = Some(tokio::sync::Mutex::new(bridge_rx));
         self
+    }
+
+    /// Set the SSE broadcast sender for real-time dashboard notifications.
+    pub fn with_sse_sender(mut self, tx: tokio::sync::broadcast::Sender<()>) -> Self {
+        self.sse_tx = Some(tx);
+        self
+    }
+
+    /// Notify the dashboard that data has changed (non-blocking, best-effort).
+    fn notify_dashboard(&self) {
+        if let Some(tx) = &self.sse_tx {
+            let _ = tx.send(());
+        }
     }
 
     fn queue_message(&self, msg: OutgoingMeshMessage) {
@@ -186,7 +194,7 @@ impl Bot {
                 Destination::Broadcast => None,
             };
 
-            let chunks = chunk_message(&response.text);
+            let chunks = chunk_message(&response.text, self.config.bot.max_message_len);
             for (i, chunk) in chunks.into_iter().enumerate() {
                 self.queue_message(OutgoingMeshMessage {
                     text: chunk,
@@ -270,7 +278,8 @@ impl Bot {
         self.deferred_events.lock().unwrap().clear();
 
         // Timer to dispatch deferred events after the grace period
-        let grace_timer = tokio::time::sleep(STARTUP_GRACE_PERIOD);
+        let grace_period = std::time::Duration::from_secs(self.config.bot.startup_grace_secs);
+        let grace_timer = tokio::time::sleep(grace_period);
         tokio::pin!(grace_timer);
         let mut grace_period_done = false;
 
@@ -323,6 +332,7 @@ impl Bot {
                     _ = &mut send_timer, if queue_has_messages => {
                         drop(rx_guard);
                         self.send_next_queued_message(&mut api, router).await;
+                        self.notify_dashboard();
                         send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
                 }
@@ -348,6 +358,7 @@ impl Bot {
                     // Drain outgoing queue
                     _ = &mut send_timer, if queue_has_messages => {
                         self.send_next_queued_message(&mut api, router).await;
+                        self.notify_dashboard();
                         send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
                     }
                 }
@@ -438,9 +449,11 @@ impl Bot {
         match variant {
             from_radio::PayloadVariant::Packet(mesh_packet) => {
                 self.handle_mesh_packet(my_node_id, &mesh_packet).await;
+                self.notify_dashboard();
             }
             from_radio::PayloadVariant::NodeInfo(node_info) => {
                 self.handle_node_info(my_node_id, &node_info).await;
+                self.notify_dashboard();
             }
             _ => {}
         }
@@ -728,7 +741,7 @@ impl Bot {
                 .connected_at
                 .lock()
                 .unwrap()
-                .map(|t| t.elapsed() < STARTUP_GRACE_PERIOD)
+                .map(|t| t.elapsed() < std::time::Duration::from_secs(self.config.bot.startup_grace_secs))
                 .unwrap_or(false);
 
             if in_grace_period {
@@ -871,8 +884,8 @@ impl Bot {
 
 }
 
-fn chunk_message(text: &str) -> Vec<String> {
-    if text.len() <= MAX_MESSAGE_LEN {
+fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
+    if text.len() <= max_len {
         return vec![text.to_string()];
     }
 
@@ -881,21 +894,21 @@ fn chunk_message(text: &str) -> Vec<String> {
 
     for line in text.lines() {
         // If adding this line would exceed limit, flush current chunk
-        if !current.is_empty() && current.len() + 1 + line.len() > MAX_MESSAGE_LEN {
+        if !current.is_empty() && current.len() + 1 + line.len() > max_len {
             chunks.push(current.clone());
             current.clear();
         }
 
         // If a single line exceeds the limit, split it by characters
-        if line.len() > MAX_MESSAGE_LEN {
+        if line.len() > max_len {
             if !current.is_empty() {
                 chunks.push(current.clone());
                 current.clear();
             }
             let mut remaining = line;
-            while remaining.len() > MAX_MESSAGE_LEN {
-                chunks.push(remaining[..MAX_MESSAGE_LEN].to_string());
-                remaining = &remaining[MAX_MESSAGE_LEN..];
+            while remaining.len() > max_len {
+                chunks.push(remaining[..max_len].to_string());
+                remaining = &remaining[max_len..];
             }
             if !remaining.is_empty() {
                 current = remaining.to_string();
@@ -936,6 +949,8 @@ mod tests {
                 rate_limit_commands: 0,
                 rate_limit_window_secs: 60,
                 send_delay_ms: 1500,
+                max_message_len: 220,
+                startup_grace_secs: 30,
             },
             welcome: WelcomeConfig {
                 enabled: false,
@@ -1009,7 +1024,7 @@ mod tests {
         let ctx = test_ctx(0xAABBCCDD, 0);
         let my_node_id = 1;
 
-        // Create a response longer than MAX_MESSAGE_LEN (220)
+        // Create a response longer than max_message_len (220)
         let long_text = "a".repeat(500);
         let responses = vec![Response {
             text: long_text.clone(),
@@ -1025,7 +1040,7 @@ mod tests {
 
         // Verify all chunks are within the limit
         for msg in queue.iter() {
-            assert!(msg.text.len() <= MAX_MESSAGE_LEN);
+            assert!(msg.text.len() <= 220);
         }
 
         // Verify total content is preserved

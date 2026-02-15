@@ -51,6 +51,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         registry.all().len()
     );
 
+    // SSE broadcast channel for dashboard real-time updates
+    let (sse_tx, _) = tokio::sync::broadcast::channel::<()>(16);
+
     // Create bridge channels
     let (bridge_tx, outgoing_tx, outgoing_rx) = create_bridge_channels();
 
@@ -108,7 +111,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Create bot with bridge channels
     let bot = bot::Bot::new(Arc::clone(&config), Arc::clone(&db), registry)
-        .with_bridge_channels(bridge_tx, outgoing_rx);
+        .with_bridge_channels(bridge_tx, outgoing_rx)
+        .with_sse_sender(sse_tx.clone());
 
     // Start dashboard if enabled
     if config.dashboard.enabled {
@@ -116,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Arc::clone(&config),
             Arc::clone(&db),
             bot.queue_depth(),
+            sse_tx.clone(),
         );
         tokio::spawn(async move {
             if let Err(e) = dashboard.run().await {

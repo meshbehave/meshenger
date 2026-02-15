@@ -19,3 +19,5 @@ teloxide = { version = "0.13", features = ["macros"] }
 serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
+futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }

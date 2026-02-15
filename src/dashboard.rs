@@ -1,12 +1,17 @@
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::Json;
+use axum::response::sse::{Event, Sse};
 use axum::routing::get;
 use axum::Router;
+use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -27,6 +32,7 @@ struct AppState {
     db: Arc<Db>,
     config: Arc<Config>,
     queue_depth: Arc<AtomicUsize>,
+    sse_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 #[derive(Deserialize)]
@@ -70,14 +76,21 @@ pub struct Dashboard {
     config: Arc<Config>,
     db: Arc<Db>,
     queue_depth: Arc<AtomicUsize>,
+    sse_tx: tokio::sync::broadcast::Sender<()>,
 }
 
 impl Dashboard {
-    pub fn new(config: Arc<Config>, db: Arc<Db>, queue_depth: Arc<AtomicUsize>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        db: Arc<Db>,
+        queue_depth: Arc<AtomicUsize>,
+        sse_tx: tokio::sync::broadcast::Sender<()>,
+    ) -> Self {
         Self {
             config,
             db,
             queue_depth,
+            sse_tx,
         }
     }
 
@@ -89,6 +102,7 @@ impl Dashboard {
             db: self.db,
             config: self.config.clone(),
             queue_depth: self.queue_depth,
+            sse_tx: self.sse_tx,
         };
 
         let api_routes = Router::new()
@@ -100,7 +114,8 @@ impl Dashboard {
             .route("/api/snr", get(handle_snr))
             .route("/api/hops", get(handle_hops))
             .route("/api/positions", get(handle_positions))
-            .route("/api/queue", get(handle_queue));
+            .route("/api/queue", get(handle_queue))
+            .route("/api/events", get(handle_sse));
 
         // Serve static files from web/dist/ if the directory exists (prod mode)
         let app = if std::path::Path::new("web/dist/index.html").exists() {
@@ -241,4 +256,16 @@ async fn handle_queue(
     Json(QueueResponse {
         depth: state.queue_depth.load(Ordering::Relaxed),
     })
+}
+
+async fn handle_sse(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.sse_tx.subscribe();
+    let stream = BroadcastStream::new(rx).map(|_| Ok(Event::default().event("refresh").data("")));
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(30))
+            .text("ping"),
+    )
 }

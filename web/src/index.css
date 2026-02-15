@@ -6,3 +6,8 @@ body {
   color: #e2e8f0;
   font-family: system-ui, -apple-system, sans-serif;
 }
+
+/* MQTT node markers on the map — orange tint to distinguish from RF (blue) */
+.mqtt-marker {
+  filter: hue-rotate(160deg) saturate(1.5);
+}

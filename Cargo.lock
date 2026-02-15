@@ -1281,6 +1281,7 @@ dependencies = [
  "axum",
  "chrono",
  "env_logger",
+ "futures-util",
  "log",
  "meshtastic",
  "reqwest 0.12.28",
@@ -1290,6 +1291,7 @@ dependencies = [
  "serenity",
  "teloxide",
  "tokio",
+ "tokio-stream",
  "toml",
  "tower-http",
 ]
@@ -2690,6 +2692,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -85,10 +85,13 @@ API endpoints:
 - `GET /api/snr?hours=24&mqtt=all` — SNR distribution
 - `GET /api/hops?hours=24&mqtt=all` — hop count distribution
 - `GET /api/queue` — current outgoing queue depth
+- `GET /api/events` — SSE stream; emits `refresh` events when new data arrives
 
 Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket by day. This keeps charts readable at longer time ranges.
 
-**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js. Dark theme. Auto-refreshes every 30s. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, sortable node table (with MQTT/RF badges), MQTT filter toggle.
+**Real-time updates**: The bot sends notifications via a `tokio::sync::broadcast` channel whenever packets arrive or messages are sent. The dashboard exposes this as an SSE endpoint (`/api/events`). The frontend connects via `EventSource` and re-fetches data on each `refresh` event. Polling every 30s remains as a fallback.
+
+**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, node map (Leaflet with MQTT/RF marker distinction), sortable node table (with MQTT/RF badges), MQTT filter toggle.
 
 **Dev workflow**: Run `cd web && npm run dev` (Vite at :5173 with proxy to :9000) alongside `cargo run`. **Prod workflow**: `cd web && npm run build` then `cargo run` — axum serves both API and SPA from port 9000.
 

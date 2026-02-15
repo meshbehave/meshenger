@@ -107,6 +107,10 @@ pub struct BotConfig {
     pub rate_limit_window_secs: u64,
     #[serde(default = "default_send_delay_ms")]
     pub send_delay_ms: u64,
+    #[serde(default = "default_max_message_len")]
+    pub max_message_len: usize,
+    #[serde(default = "default_startup_grace_secs")]
+    pub startup_grace_secs: u64,
 }
 
 fn default_rate_limit_commands() -> usize {
@@ -119,6 +123,14 @@ fn default_rate_limit_window() -> u64 {
 
 fn default_send_delay_ms() -> u64 {
     1500
+}
+
+fn default_max_message_len() -> usize {
+    220
+}
+
+fn default_startup_grace_secs() -> u64 {
+    30
 }
 
 fn default_command_prefix() -> String {
