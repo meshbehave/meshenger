@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -eu
+
+echo "[pre-commit] running cargo fmt --all -- --check"
+cargo fmt --all -- --check
+
+echo "[pre-commit] running cargo clippy --all-targets --all-features"
+cargo clippy --all-targets --all-features
