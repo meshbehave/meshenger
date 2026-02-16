@@ -214,6 +214,7 @@ Issues are tracked in-repo under `issues/` (filesystem-based).
 - Optional helper: `scripts/new-issue.sh --title "..."`
 - Keep `issues/index.md` updated when adding/changing issue status
 - Move issue files across status folders: `open`, `in_progress`, `resolved`, `rejected`
+- When resolving an issue, add the fixing commit hash under `## References` as `Commit: <hash>`
 
 ## License
 
