@@ -5,7 +5,8 @@ import type {
   ThroughputBucket,
   DistributionBucket,
   QueueDepth,
-  TracerouteRequester,
+  TracerouteDestinationRow,
+  TracerouteEventRow,
   MqttFilterValue,
   HoursValue,
   PacketTypeFilter,
@@ -20,7 +21,7 @@ import { SnrChart } from "./components/SnrChart";
 import { HopChart } from "./components/HopChart";
 import { NodeTable } from "./components/NodeTable";
 import { NodeMap } from "./components/NodeMap";
-import { TracerouteRequesterTable } from "./components/TracerouteRequesterTable";
+import { TracerouteTrafficPanel } from "./components/TracerouteTrafficPanel";
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -38,8 +39,11 @@ function App() {
   const [snr, setSnr] = useState<DistributionBucket[] | null>(null);
   const [hops, setHops] = useState<DistributionBucket[] | null>(null);
   const [queue, setQueue] = useState<QueueDepth | null>(null);
-  const [tracerouteRequesters, setTracerouteRequesters] = useState<
-    TracerouteRequester[] | null
+  const [tracerouteEvents, setTracerouteEvents] = useState<
+    TracerouteEventRow[] | null
+  >(null);
+  const [tracerouteDestinations, setTracerouteDestinations] = useState<
+    TracerouteDestinationRow[] | null
   >(null);
 
   const params = useMemo(() => {
@@ -51,21 +55,25 @@ function App() {
 
   const fetchAll = useCallback(async () => {
     const p = params.toString();
-    const [ov, nd, tp, pt, rs, sn, hp, qu, tr] = await Promise.all([
-      fetch(`/api/overview?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/nodes?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/throughput?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(
-        `/api/packet-throughput?${p}${packetFilter !== "all" ? `&types=${packetFilter}` : ""}`,
-      ).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/rssi?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/snr?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/hops?${p}`).then((r) => (r.ok ? r.json() : null)),
-      fetch("/api/queue").then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/traceroute-requesters?${p}`).then((r) =>
-        r.ok ? r.json() : null,
-      ),
-    ]);
+    const [ov, nd, tp, pt, rs, sn, hp, qu, trEvents, trDestinations] =
+      await Promise.all([
+        fetch(`/api/overview?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/nodes?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/throughput?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(
+          `/api/packet-throughput?${p}${packetFilter !== "all" ? `&types=${packetFilter}` : ""}`,
+        ).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/rssi?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/snr?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/hops?${p}`).then((r) => (r.ok ? r.json() : null)),
+        fetch("/api/queue").then((r) => (r.ok ? r.json() : null)),
+        fetch(`/api/traceroute-events?${p}`).then((r) =>
+          r.ok ? r.json() : null,
+        ),
+        fetch(`/api/traceroute-destinations?${p}`).then((r) =>
+          r.ok ? r.json() : null,
+        ),
+      ]);
     setOverview(ov);
     setNodes(nd);
     setThroughput(tp);
@@ -74,7 +82,8 @@ function App() {
     setSnr(sn);
     setHops(hp);
     setQueue(qu);
-    setTracerouteRequesters(tr);
+    setTracerouteEvents(trEvents);
+    setTracerouteDestinations(trDestinations);
   }, [params, packetFilter]);
 
   useEffect(() => {
@@ -130,7 +139,10 @@ function App() {
           <HopChart data={hops} />
         </div>
 
-        <TracerouteRequesterTable rows={tracerouteRequesters} />
+        <TracerouteTrafficPanel
+          events={tracerouteEvents}
+          destinations={tracerouteDestinations}
+        />
 
         <NodeMap nodes={nodes} />
 

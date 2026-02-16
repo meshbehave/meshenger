@@ -19,6 +19,8 @@ cargo test module_name::           # Run tests in a specific module
 cargo test -- --nocapture          # Show println output
 RUST_LOG=debug cargo run           # Verbose logging
 RUST_LOG=meshenger=debug cargo run  # Crate-only debug logging
+scripts/run-with-web.sh            # Build web frontend, then run with config.toml
+scripts/run-with-web.sh /path/to/config.toml
 ```
 
 ## Architecture
@@ -101,6 +103,8 @@ API endpoints:
 - `GET /api/snr?hours=24&mqtt=all` — SNR distribution
 - `GET /api/hops?hours=24&mqtt=all` — hop count distribution
 - `GET /api/traceroute-requesters?hours=24&mqtt=all` — nodes that sent incoming traceroute requests to the local node (count + last seen)
+- `GET /api/traceroute-events?hours=24&mqtt=all` — recent incoming traceroute events (from/to/source/hops/RSSI/SNR)
+- `GET /api/traceroute-destinations?hours=24&mqtt=all` — destination summary (requests, unique requesters, RF/MQTT split, last seen, avg hops)
 - `GET /api/queue` — current outgoing queue depth
 - `GET /api/events` — SSE stream; emits `refresh` events when new data arrives
 
@@ -108,7 +112,7 @@ Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket 
 
 **Real-time updates**: The bot sends notifications via a `tokio::sync::broadcast` channel whenever packets arrive or messages are sent. The dashboard exposes this as an SSE endpoint (`/api/events`). The frontend connects via `EventSource` and re-fetches data on each `refresh` event. Polling every 30s remains as a fallback.
 
-**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, traceroute requester table (incoming traceroute to local node), node map (Leaflet with MQTT/RF marker distinction + per-node hop summary), sortable node table (with MQTT/RF badges + per-node hop summary), MQTT filter toggle.
+**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, traceroute traffic panel with 2 tabs (`Events` + `Destinations`), node map (Leaflet with MQTT/RF marker distinction + per-node hop summary), sortable node table (with MQTT/RF badges + per-node hop summary), MQTT filter toggle.
 
 **Dev workflow**: Run `cd web && npm run dev` (Vite at :5173 with proxy to :9000) alongside `cargo run`. **Prod workflow**: `cd web && npm run build` then `cargo run` — axum serves both API and SPA from port 9000.
 

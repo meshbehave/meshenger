@@ -114,6 +114,11 @@ impl Dashboard {
                 "/api/traceroute-requesters",
                 get(handle_traceroute_requesters),
             )
+            .route("/api/traceroute-events", get(handle_traceroute_events))
+            .route(
+                "/api/traceroute-destinations",
+                get(handle_traceroute_destinations),
+            )
             .route("/api/positions", get(handle_positions))
             .route("/api/queue", get(handle_queue))
             .route("/api/events", get(handle_sse));
@@ -264,6 +269,36 @@ async fn handle_traceroute_requesters(
         .dashboard_traceroute_requesters(local_node_id, params.hours, filter)
         .map_err(|e| {
             log::error!("Dashboard traceroute requesters error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    to_json(rows)
+}
+
+async fn handle_traceroute_events(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let rows = state
+        .db
+        .dashboard_traceroute_events(params.hours, filter, 200)
+        .map_err(|e| {
+            log::error!("Dashboard traceroute events error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    to_json(rows)
+}
+
+async fn handle_traceroute_destinations(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let rows = state
+        .db
+        .dashboard_traceroute_destinations(params.hours, filter)
+        .map_err(|e| {
+            log::error!("Dashboard traceroute destinations error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     to_json(rows)

@@ -46,6 +46,33 @@ export interface TracerouteRequester {
   via_mqtt: boolean;
 }
 
+export interface TracerouteEventRow {
+  timestamp: number;
+  from_node: string;
+  from_short_name: string;
+  from_long_name: string;
+  to_node: string;
+  to_short_name: string;
+  to_long_name: string;
+  via_mqtt: boolean;
+  hop_count: number | null;
+  hop_start: number | null;
+  rssi: number | null;
+  snr: number | null;
+}
+
+export interface TracerouteDestinationRow {
+  destination_node: string;
+  destination_short_name: string;
+  destination_long_name: string;
+  requests: number;
+  unique_requesters: number;
+  last_seen: number;
+  rf_count: number;
+  mqtt_count: number;
+  avg_hops: number | null;
+}
+
 export type MqttFilterValue = "all" | "local" | "mqtt_only";
 
 export type HoursValue = 24 | 72 | 168 | 720 | 2160 | 8760 | 0;

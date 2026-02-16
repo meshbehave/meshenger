@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Severity | Component | Reported | File |
 | --- | --- | --- | --- | --- | --- | --- |
+| ISS-20260216-dashboard-traceroute-traffic-tabs | Dashboard traceroute view should include all seen destinations with Events/Destinations tabs | resolved | medium | dashboard+db+web | 2026-02-16 | `issues/resolved/ISS-20260216-dashboard-traceroute-traffic-tabs.md` |
 | ISS-20260216-dashboard-traceroute-requesters | Dashboard should show which nodes requested traceroute to my node | resolved | medium | dashboard+bot/incoming+db | 2026-02-16 | `issues/resolved/ISS-20260216-dashboard-traceroute-requesters.md` |
 | ISS-20260216-ping-hop-display-denominator | Ping hop display used remaining hops as denominator | resolved | medium | module/ping | 2026-02-16 | `issues/resolved/ISS-20260216-ping-hop-display-denominator.md` |
 | ISS-20260216-script-smoke-test-issue | Script smoke test issue (template validation artifact) | rejected | medium | tooling/issues | 2026-02-16 | `issues/rejected/ISS-20260216-script-smoke-test-issue.md` |

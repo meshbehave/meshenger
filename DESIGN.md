@@ -405,7 +405,7 @@ axum HTTP server serving JSON APIs and static frontend files. Key features:
 - **Time range**: `hours` parameter on all time-based endpoints
 - **Smart bucketing**: hourly buckets for ≤48h, daily for >48h
 - **Queue depth**: shared via `Arc<AtomicUsize>` from the bot's outgoing queue
-- **Traceroute requester stats**: incoming traceroute packets addressed to local node, grouped by requester
+- **Traceroute traffic stats**: incoming traceroute events and destination summary across all seen traceroute packets
 
 ### Optional Auto Traceroute Probe
 
@@ -428,7 +428,7 @@ Components:
 - **PacketThroughputChart** — all packet types with type toggle filters (All/Text/Position/Telemetry/Other)
 - **RssiChart / SnrChart** — RF quality distribution bar charts
 - **HopsChart** — hop count doughnut chart
-- **TracerouteRequesterTable** — list of nodes that requested traceroute to local node with count + last request time
+- **TracerouteTrafficPanel** — tabbed traceroute views: `Events` (raw packets) and `Destinations` (aggregated targets)
 - **NodeTable** — sortable table with MQTT/RF source badges and per-node hop summary (last/avg/min), filterable by MQTT status
 - **MqttFilter** — global toggle for MQTT vs local RF filtering
 
