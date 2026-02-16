@@ -8,21 +8,21 @@ The project prioritizes **customizability** — adding a new feature means imple
 
 ## Current Feature Set
 
-| Feature | Command | Description | Scope |
-|---------|---------|-------------|-------|
-| Ping | `!ping` | Signal quality metrics (RSSI, SNR, hop count, MQTT indicator) | Public + DM |
-| Node Info | `!nodes [n]` | Lists mesh nodes the bot has seen, with last-seen times (default 5, max 20) | Public + DM |
-| Weather | `!weather` | Current conditions from Open-Meteo API — location-aware | Public + DM |
-| Welcome | *(automatic)* | Sends a DM greeting when a new node is first seen (with optional whitelist) | DM only |
-| Uptime | `!uptime` | Bot uptime and message statistics | Public + DM |
-| Help | `!help` | Lists available commands | Public + DM |
+| Feature   | Command       | Description                                                                 | Scope       |
+| --------- | ------------- | --------------------------------------------------------------------------- | ----------- |
+| Ping      | `!ping`       | Signal quality metrics (RSSI, SNR, hop count, MQTT indicator)               | Public + DM |
+| Node Info | `!nodes [n]`  | Lists mesh nodes the bot has seen, with last-seen times (default 5, max 20) | Public + DM |
+| Weather   | `!weather`    | Current conditions from Open-Meteo API — location-aware                     | Public + DM |
+| Welcome   | _(automatic)_ | Sends a DM greeting when a new node is first seen (with optional whitelist) | DM only     |
+| Uptime    | `!uptime`     | Bot uptime and message statistics                                           | Public + DM |
+| Help      | `!help`       | Lists available commands                                                    | Public + DM |
 
 ## Bridges
 
-| Bridge | Description | Status |
-|--------|-------------|--------|
-| Telegram | Bidirectional message bridge to Telegram groups | Implemented |
-| Discord | Bidirectional message bridge to Discord channels | Planned |
+| Bridge   | Description                                      | Status      |
+| -------- | ------------------------------------------------ | ----------- |
+| Telegram | Bidirectional message bridge to Telegram groups  | Implemented |
+| Discord  | Bidirectional message bridge to Discord channels | Planned     |
 
 ## Future Ideas
 
@@ -135,6 +135,7 @@ pub enum MeshEvent {
 ### Response Chunking
 
 Meshtastic has a ~230 byte message limit. A `send_responses()` helper in `bot.rs` will:
+
 1. Check if text fits in one message
 2. If not, split on newline boundaries or at 220 chars
 3. Send chunks sequentially with a small delay between them (~1s)
@@ -199,6 +200,7 @@ loop (reconnection) {
 ### Rate Limiting
 
 The bot includes an in-memory rate limiter using a sliding window algorithm:
+
 - Tracks command timestamps per node ID
 - Configurable max commands per window (default: 5)
 - Configurable window duration (default: 60 seconds)
@@ -241,6 +243,7 @@ CREATE TABLE IF NOT EXISTS packets (
 ```
 
 Key queries:
+
 - `upsert_node(id, short, long, via_mqtt)` — INSERT OR UPDATE, set last_seen and via_mqtt
 - `is_node_new(id) -> bool` — check if node exists
 - `is_node_absent(id, threshold_hours) -> bool` — check if last_seen is older than threshold
@@ -262,17 +265,20 @@ Key queries:
 ## Module Designs
 
 ### Ping (`!ping`) — scope: Both
+
 - Responds with: `Pong! RSSI: {rssi} SNR: {snr} Hops: {hop_count}/{hop_limit}`
 - Appends "(via MQTT)" if `ctx.via_mqtt` is true
 - Pulls all data from `MessageContext`, no DB needed
 
 ### Node Info (`!nodes [count]`) — scope: Both
+
 - Queries DB for all seen nodes
 - Optional argument: number of nodes to show (default 5, max 20)
 - Format: `Nodes seen: 42\n!abc1234 NodeName (2m ago)\n...`
 - Shows "...and N more" if list is truncated
 
 ### Weather (`!weather`) — scope: Both
+
 - Uses Open-Meteo API (free, no API key needed)
 - **Location-aware**: checks if sender has a known position in DB
   - If yes: uses sender's position, shows "(your location)" in response
@@ -283,6 +289,7 @@ Key queries:
 - Format: `Weather (your location): 24°C Partly Cloudy\nHumidity: 65% Wind: 12km/h`
 
 ### Welcome (`welcome`) — scope: DM (outgoing only)
+
 - No commands — purely event-driven via `handle_event()`
 - On `MeshEvent::NodeDiscovered`:
   - **Whitelist check**: if whitelist is configured, only greet listed nodes
@@ -294,6 +301,7 @@ Key queries:
 - All parameters configurable in config.toml
 
 ### Uptime (`!uptime`) — scope: Both
+
 - Tracks bot start time
 - Shows:
   - Uptime duration (Xd Xh Xm Xs format)
@@ -302,6 +310,7 @@ Key queries:
   - Total nodes seen
 
 ### Help (`!help`) — scope: Both
+
 - Auto-generated from module registry
 - Lists all enabled commands with one-line descriptions
 - Format: `!ping - Signal report\n!nodes - Mesh node listing\n!weather - Weather forecast`
@@ -350,6 +359,7 @@ pub struct OutgoingBridgeMessage {
 ### Echo Prevention
 
 Messages are tagged with their source to prevent echo loops:
+
 - Mesh → Telegram: Format as `[NodeName] message`
 - Telegram → Mesh: Format as `[TG:username] message`
 - Bot skips broadcasting messages that start with `[TG:` or `[DC:` back to bridges
@@ -359,6 +369,7 @@ Messages are tagged with their source to prevent echo loops:
 Uses the `teloxide` crate for Telegram Bot API.
 
 **Configuration:**
+
 ```toml
 [bridge.telegram]
 enabled = true
@@ -370,11 +381,13 @@ format = "[{name}] {message}"
 ```
 
 **Direction options:**
+
 - `both` — Bidirectional bridging
 - `to_telegram` — Only forward mesh messages to Telegram
 - `to_mesh` — Only forward Telegram messages to mesh
 
 **Format placeholders:**
+
 - `{name}` — Sender's node name
 - `{id}` — Sender's node ID (hex)
 - `{message}` — Message text
@@ -387,6 +400,7 @@ An optional web dashboard provides real-time metrics and node tracking.
 ### Backend (`src/dashboard.rs`)
 
 axum HTTP server serving JSON APIs and static frontend files. Key features:
+
 - **MQTT filtering**: `MqttFilter` enum (All/LocalOnly/MqttOnly) on most endpoints
 - **Time range**: `hours` parameter on all time-based endpoints
 - **Smart bucketing**: hourly buckets for ≤48h, daily for >48h
@@ -406,6 +420,7 @@ An optional scheduler can queue low-frequency traceroute probes to discover hop 
 React + TypeScript + Vite + Tailwind CSS v4 + Chart.js SPA.
 
 Components:
+
 - **TimeRangeSelector** — toggle: 1d / 3d / 7d / 30d / 90d / 365d / All
 - **OverviewCards** — 6 cards: Total Nodes, Messages In/Out, Packets In/Out, Queue Depth (labels reflect selected time range)
 - **ThroughputChart** — text message throughput (line chart)
@@ -502,6 +517,7 @@ chrono = "0.4"
 ## Hardcoding Policy
 
 Nothing configurable is hardcoded. All of the following come from `config.toml`:
+
 - Connection address (TCP host:port) and reconnect delay
 - Bot name, database path, command prefix
 - Rate limiting parameters
@@ -559,15 +575,18 @@ impl Module for EchoModule {
 ## Development Notes
 
 ### Logging
+
 - Log level controlled via `RUST_LOG` environment variable
 - Default filter: `info,meshtastic::connections::stream_buffer=off`
 - The stream_buffer filter suppresses benign "incomplete packet" errors from the meshtastic crate
 
 ### Error Handling
+
 - All error types use `Box<dyn std::error::Error + Send + Sync>` for async compatibility
 - Custom `RouterError` type for PacketRouter trait implementation
 
 ### Testing
+
 1. `cargo build` — must compile cleanly
 2. `cargo run` — connect to node
 3. Send commands from another Meshtastic device/app

@@ -1,11 +1,6 @@
-import { Doughnut } from 'react-chartjs-2';
-import {
-  Chart as ChartJS,
-  ArcElement,
-  Tooltip,
-  Legend,
-} from 'chart.js';
-import type { DistributionBucket } from '../types';
+import { Doughnut } from "react-chartjs-2";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import type { DistributionBucket } from "../types";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -13,7 +8,15 @@ interface Props {
   data: DistributionBucket[] | null;
 }
 
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+const COLORS = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#ec4899",
+  "#06b6d4",
+];
 
 export function HopChart({ data }: Props) {
   if (!data || data.length === 0) {
@@ -30,7 +33,7 @@ export function HopChart({ data }: Props) {
       {
         data: data.map((b) => b.count),
         backgroundColor: data.map((_, i) => COLORS[i % COLORS.length]),
-        borderColor: '#1e293b',
+        borderColor: "#1e293b",
         borderWidth: 2,
       },
     ],
@@ -38,7 +41,9 @@ export function HopChart({ data }: Props) {
 
   return (
     <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-      <h3 className="text-sm font-medium text-slate-400 mb-3">Hop Count Distribution</h3>
+      <h3 className="text-sm font-medium text-slate-400 mb-3">
+        Hop Count Distribution
+      </h3>
       <div className="flex justify-center">
         <div className="w-64 h-64">
           <Doughnut
@@ -46,7 +51,9 @@ export function HopChart({ data }: Props) {
             options={{
               responsive: true,
               maintainAspectRatio: false,
-              plugins: { legend: { labels: { color: '#94a3b8' }, position: 'bottom' } },
+              plugins: {
+                legend: { labels: { color: "#94a3b8" }, position: "bottom" },
+              },
             }}
           />
         </div>

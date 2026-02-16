@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { MqttFilterValue } from '../types';
+import { useState, useEffect, useCallback } from "react";
+import type { MqttFilterValue } from "../types";
 
-export function useApi<T>(path: string, mqtt: MqttFilterValue, extraParams?: Record<string, string>) {
+export function useApi<T>(
+  path: string,
+  mqtt: MqttFilterValue,
+  extraParams?: Record<string, string>,
+) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -15,7 +19,10 @@ export function useApi<T>(path: string, mqtt: MqttFilterValue, extraParams?: Rec
   }, [path, mqtt, extraParams]);
 
   useEffect(() => {
-    fetchData();
+    const initialFetchId = setTimeout(() => {
+      void fetchData();
+    }, 0);
+    return () => clearTimeout(initialFetchId);
   }, [fetchData]);
 
   return { data, loading, refetch: fetchData };

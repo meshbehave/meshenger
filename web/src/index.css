@@ -4,7 +4,10 @@ body {
   margin: 0;
   background-color: #0f172a;
   color: #e2e8f0;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
 /* MQTT node markers on the map — orange tint to distinguish from RF (blue) */

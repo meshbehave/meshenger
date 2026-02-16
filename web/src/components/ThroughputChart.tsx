@@ -1,4 +1,4 @@
-import { Line } from 'react-chartjs-2';
+import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -9,10 +9,19 @@ import {
   Tooltip,
   Legend,
   Filler,
-} from 'chart.js';
-import type { ThroughputBucket } from '../types';
+} from "chart.js";
+import type { ThroughputBucket } from "../types";
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
+);
 
 interface Props {
   data: ThroughputBucket[] | null;
@@ -28,7 +37,7 @@ export function ThroughputChart({ data }: Props) {
   }
 
   const labels = data.map((b) => {
-    const parts = b.hour.split(' ');
+    const parts = b.hour.split(" ");
     return parts[1] || b.hour;
   });
 
@@ -36,18 +45,18 @@ export function ThroughputChart({ data }: Props) {
     labels,
     datasets: [
       {
-        label: 'Incoming',
+        label: "Incoming",
         data: data.map((b) => b.incoming),
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderColor: "#3b82f6",
+        backgroundColor: "rgba(59, 130, 246, 0.1)",
         fill: true,
         tension: 0.3,
       },
       {
-        label: 'Outgoing',
+        label: "Outgoing",
         data: data.map((b) => b.outgoing),
-        borderColor: '#10b981',
-        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+        borderColor: "#10b981",
+        backgroundColor: "rgba(16, 185, 129, 0.1)",
         fill: true,
         tension: 0.3,
       },
@@ -56,15 +65,21 @@ export function ThroughputChart({ data }: Props) {
 
   return (
     <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-      <h3 className="text-sm font-medium text-slate-400 mb-3">Message Throughput</h3>
+      <h3 className="text-sm font-medium text-slate-400 mb-3">
+        Message Throughput
+      </h3>
       <Line
         data={chartData}
         options={{
           responsive: true,
-          plugins: { legend: { labels: { color: '#94a3b8' } } },
+          plugins: { legend: { labels: { color: "#94a3b8" } } },
           scales: {
-            x: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' } },
-            y: { ticks: { color: '#64748b' }, grid: { color: '#1e293b' }, beginAtZero: true },
+            x: { ticks: { color: "#64748b" }, grid: { color: "#1e293b" } },
+            y: {
+              ticks: { color: "#64748b" },
+              grid: { color: "#1e293b" },
+              beginAtZero: true,
+            },
           },
         }}
       />

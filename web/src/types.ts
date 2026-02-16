@@ -37,8 +37,13 @@ export interface QueueDepth {
   depth: number;
 }
 
-export type MqttFilterValue = 'all' | 'local' | 'mqtt_only';
+export type MqttFilterValue = "all" | "local" | "mqtt_only";
 
 export type HoursValue = 24 | 72 | 168 | 720 | 2160 | 8760 | 0;
 
-export type PacketTypeFilter = 'all' | 'text' | 'position' | 'telemetry' | 'other';
+export type PacketTypeFilter =
+  | "all"
+  | "text"
+  | "position"
+  | "telemetry"
+  | "other";

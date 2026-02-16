@@ -1,8 +1,27 @@
 #!/usr/bin/env sh
 set -eu
 
+repo_root="$(git rev-parse --show-toplevel)"
+web_dir="$repo_root/web"
+
 echo "[pre-commit] running cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
 echo "[pre-commit] running cargo clippy --all-targets --all-features"
 cargo clippy --all-targets --all-features
+
+if [ -f "$web_dir/package.json" ]; then
+  if command -v npm >/dev/null 2>&1; then
+    echo "[pre-commit] running web eslint"
+    npm --prefix "$web_dir" run -s lint
+
+    if [ -x "$web_dir/node_modules/.bin/prettier" ]; then
+      echo "[pre-commit] running web prettier --check"
+      npm --prefix "$web_dir" exec -- prettier --check "$web_dir"
+    else
+      echo "[pre-commit] prettier not installed in web; skipping prettier check"
+    fi
+  else
+    echo "[pre-commit] npm not found; skipping web eslint/prettier checks"
+  fi
+fi

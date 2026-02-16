@@ -40,6 +40,7 @@ The bot connects to a Meshtastic node via TCP in `bot.rs`, dispatching incoming 
 ### Module System
 
 All modules implement the `Module` trait (`src/module.rs`). Key conventions:
+
 - Modules register **bare command names** (e.g., `"ping"` not `"!ping"`) — the bot prepends the configurable command prefix
 - Modules can handle both commands (`handle_command`) and events (`handle_event` for `MeshEvent::NodeDiscovered`, etc.)
 - Module registration happens in `src/modules/mod.rs` via `build_registry()`, gated by `config.is_module_enabled("name")`
@@ -48,6 +49,7 @@ All modules implement the `Module` trait (`src/module.rs`). Key conventions:
 ### Bridge System
 
 Bridges connect the mesh to external platforms (Telegram via `teloxide`, Discord via `serenity`). Communication uses two channel types in `bridge.rs`:
+
 - `MeshMessageSender` (broadcast) — bot → all bridges
 - `OutgoingMessageSender` (mpsc) — bridges → bot
 
@@ -58,6 +60,7 @@ Echo prevention: bridge-originated messages are prefixed with source tags (`[TG:
 All outgoing mesh messages go through a `VecDeque<OutgoingMeshMessage>` queue in `Bot`, drained by a timer branch in the `tokio::select!` event loop. This prevents radio flooding when many messages are generated at once (e.g., deferred welcome greetings after the startup grace period).
 
 Key components:
+
 - **`OutgoingMeshMessage`** — struct holding text, destination, channel, and DB logging fields
 - **`queue_message()`** — pushes a single message onto the queue
 - **`queue_responses()`** — converts `Response` objects into queued messages (with chunking for long text)
@@ -71,6 +74,7 @@ Messages from all sources (command responses, event responses, bridge messages, 
 `[traceroute_probe]` can periodically queue a traceroute for a recently seen RF node that has no recorded inbound RF hop metadata yet.
 
 Safety defaults are conservative:
+
 - `interval_secs = 900` (15 min)
 - `per_node_cooldown_secs = 21600` (6 h)
 - `enabled = false` by default
@@ -88,6 +92,7 @@ An optional web dashboard (`src/dashboard.rs`) serves metrics via an axum HTTP s
 **Backend** (`src/dashboard.rs`): axum routes under `/api/*` return JSON. Queries go through `Db` dashboard methods. An `MqttFilter` enum (All/LocalOnly/MqttOnly) filters metrics by MQTT vs local RF. Queue depth is shared via `Arc<AtomicUsize>`. Static files from `web/dist/` are served in production via `tower_http::services::ServeDir`.
 
 API endpoints:
+
 - `GET /api/overview?hours=24` — node count, message in/out (text only), packet in/out (all types), bot name
 - `GET /api/nodes?hours=24&mqtt=all|local|mqtt_only` — node list with MQTT/RF distinction and per-node hop summary
 - `GET /api/throughput?hours=24&mqtt=all` — text message throughput (hourly or daily buckets)
@@ -115,12 +120,14 @@ The `packets` table includes a `packet_type` column (`text`, `position`, `teleme
 The `nodes` table includes a `via_mqtt` column tracking whether a node was last seen via MQTT or local RF. This is populated from the `NodeInfo` protobuf's `via_mqtt` field and carried through `MeshEvent::NodeDiscovered` (including deferred events during the startup grace period).
 
 Dashboard node rows include derived hop summary fields from RF packet history:
+
 - `last_hop` — latest known inbound RF hop count for the node (not time-windowed)
 - `min_hop` / `avg_hop` — inbound RF hop stats over the selected dashboard `hours` window (or all-time when `hours=0`)
 
 ### Configuration
 
 TOML format (`config.toml`, gitignored). All settings have defaults via `#[serde(default = "...")]`. When adding a config option:
+
 1. Add field to the appropriate struct in `config.rs` with a serde default
 2. Add the default function
 3. Document it in `config.example.toml`

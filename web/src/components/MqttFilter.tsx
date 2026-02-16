@@ -1,4 +1,4 @@
-import type { MqttFilterValue } from '../types';
+import type { MqttFilterValue } from "../types";
 
 interface Props {
   value: MqttFilterValue;
@@ -6,9 +6,9 @@ interface Props {
 }
 
 const options: { value: MqttFilterValue; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'local', label: 'Local RF' },
-  { value: 'mqtt_only', label: 'MQTT Only' },
+  { value: "all", label: "All" },
+  { value: "local", label: "Local RF" },
+  { value: "mqtt_only", label: "MQTT Only" },
 ];
 
 export function MqttFilter({ value, onChange }: Props) {
@@ -20,8 +20,8 @@ export function MqttFilter({ value, onChange }: Props) {
           onClick={() => onChange(opt.value)}
           className={`px-3 py-1 rounded text-sm font-medium transition-colors ${
             value === opt.value
-              ? 'bg-blue-600 text-white'
-              : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              ? "bg-blue-600 text-white"
+              : "bg-slate-700 text-slate-300 hover:bg-slate-600"
           }`}
         >
           {opt.label}

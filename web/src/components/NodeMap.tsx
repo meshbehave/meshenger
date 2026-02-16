@@ -1,15 +1,16 @@
-import { useMemo } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import type { DashboardNode } from '../types';
+import { useMemo } from "react";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import type { DashboardNode } from "../types";
 
 // Fix default marker icons (leaflet CSS expects images in a specific path)
-import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
-import markerIcon from 'leaflet/dist/images/marker-icon.png';
-import markerShadow from 'leaflet/dist/images/marker-shadow.png';
+import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
+import markerIcon from "leaflet/dist/images/marker-icon.png";
+import markerShadow from "leaflet/dist/images/marker-shadow.png";
 
-delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
+delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)
+  ._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   iconUrl: markerIcon,
@@ -24,25 +25,29 @@ const mqttIcon = new L.Icon({
   iconAnchor: [12, 41],
   popupAnchor: [1, -34],
   shadowSize: [41, 41],
-  className: 'mqtt-marker',
+  className: "mqtt-marker",
 });
 
 function formatLastSeen(ts: number): string {
   const now = Math.floor(Date.now() / 1000);
   const diff = now - ts;
-  if (diff < 60) return 'just now';
+  if (diff < 60) return "just now";
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
-function formatHopSummary(lastHop: number | null, avgHop: number | null, minHop: number | null): string {
-  if (lastHop == null && avgHop == null && minHop == null) return '—';
+function formatHopSummary(
+  lastHop: number | null,
+  avgHop: number | null,
+  minHop: number | null,
+): string {
+  if (lastHop == null && avgHop == null && minHop == null) return "—";
   const parts: string[] = [];
   if (lastHop != null) parts.push(`last ${lastHop}`);
   if (avgHop != null) parts.push(`avg ${avgHop.toFixed(1)}`);
   if (minHop != null) parts.push(`min ${minHop}`);
-  return parts.join(' / ');
+  return parts.join(" / ");
 }
 
 interface Props {
@@ -51,7 +56,8 @@ interface Props {
 
 export function NodeMap({ nodes }: Props) {
   const nodesWithPosition = useMemo(
-    () => (nodes ?? []).filter((n) => n.latitude != null && n.longitude != null),
+    () =>
+      (nodes ?? []).filter((n) => n.latitude != null && n.longitude != null),
     [nodes],
   );
 
@@ -59,21 +65,29 @@ export function NodeMap({ nodes }: Props) {
     return (
       <div className="bg-slate-800 rounded-lg p-4">
         <h2 className="text-lg font-semibold mb-3">Node Map</h2>
-        <p className="text-slate-400 text-sm">No nodes with position data available.</p>
+        <p className="text-slate-400 text-sm">
+          No nodes with position data available.
+        </p>
       </div>
     );
   }
 
   const center: [number, number] = [
-    nodesWithPosition.reduce((s, n) => s + n.latitude!, 0) / nodesWithPosition.length,
-    nodesWithPosition.reduce((s, n) => s + n.longitude!, 0) / nodesWithPosition.length,
+    nodesWithPosition.reduce((s, n) => s + n.latitude!, 0) /
+      nodesWithPosition.length,
+    nodesWithPosition.reduce((s, n) => s + n.longitude!, 0) /
+      nodesWithPosition.length,
   ];
 
   return (
     <div className="bg-slate-800 rounded-lg p-4">
       <h2 className="text-lg font-semibold mb-3">Node Map</h2>
-      <div className="rounded-lg overflow-hidden" style={{ height: '400px' }}>
-        <MapContainer center={center} zoom={12} style={{ height: '100%', width: '100%' }}>
+      <div className="rounded-lg overflow-hidden" style={{ height: "400px" }}>
+        <MapContainer
+          center={center}
+          zoom={12}
+          style={{ height: "100%", width: "100%" }}
+        >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -86,13 +100,17 @@ export function NodeMap({ nodes }: Props) {
             >
               <Popup>
                 <div className="text-sm">
-                  <strong>{node.long_name || node.short_name || node.node_id}</strong>
+                  <strong>
+                    {node.long_name || node.short_name || node.node_id}
+                  </strong>
                   <br />
                   {node.node_id}
                   <br />
-                  {node.via_mqtt ? 'MQTT' : 'RF'} &middot; {formatLastSeen(node.last_seen)}
+                  {node.via_mqtt ? "MQTT" : "RF"} &middot;{" "}
+                  {formatLastSeen(node.last_seen)}
                   <br />
-                  Hops: {formatHopSummary(node.last_hop, node.avg_hop, node.min_hop)}
+                  Hops:{" "}
+                  {formatHopSummary(node.last_hop, node.avg_hop, node.min_hop)}
                 </div>
               </Popup>
             </Marker>

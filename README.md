@@ -10,13 +10,13 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 
 **Runs commands** — Users on the mesh can interact with the bot:
 
-| Command | What it does |
-|---------|-------------|
-| `!ping` | Signal quality report (RSSI, SNR, hop count, MQTT indicator) |
-| `!nodes [count]` | List recently seen nodes (default 5, max 20) |
-| `!weather` | Current weather — uses your GPS position if known, otherwise a default location |
-| `!uptime` | Bot uptime and message stats |
-| `!help` | List available commands |
+| Command          | What it does                                                                    |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `!ping`          | Signal quality report (RSSI, SNR, hop count, MQTT indicator)                    |
+| `!nodes [count]` | List recently seen nodes (default 5, max 20)                                    |
+| `!weather`       | Current weather — uses your GPS position if known, otherwise a default location |
+| `!uptime`        | Bot uptime and message stats                                                    |
+| `!help`          | List available commands                                                         |
 
 **Bridges to chat platforms** — Bidirectional message bridging to Telegram and Discord. Mesh users see `[TG:alice]` or `[DC:bob]` prefixed messages, and chat platform users see formatted mesh messages. No more checking two apps.
 
@@ -73,6 +73,7 @@ docker compose logs -f meshenger
 ```
 
 Notes:
+
 - The container runs as a non-root user (`meshenger`).
 - Container user/group IDs are set from host `UID/GID` (fallback `1000:1000`) at build time.
 - `config.toml` is mounted read-only at `/config/config.toml`.
@@ -153,6 +154,7 @@ format = "[{name}] {message}" # placeholders: {name}, {id}, {message}, {channel}
 ```
 
 Create a bot via [@BotFather](https://t.me/botfather), add it to your group, then grab the chat ID with:
+
 ```sh
 curl https://api.telegram.org/bot<TOKEN>/getUpdates
 ```
@@ -170,6 +172,7 @@ format = "**{name}**: {message}"
 ```
 
 Setup: create a bot at the [Discord Developer Portal](https://discord.com/developers/applications), enable **MESSAGE CONTENT INTENT**, then invite it with:
+
 ```
 https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot&permissions=3072
 ```
