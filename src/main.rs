@@ -42,9 +42,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let config = Arc::new(Config::load(path)?);
-    log::info!("Loaded config from {}", config_path);
+    let config_path_display = path
+        .canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| config_path.clone());
+    log::info!(
+        "Starting Meshenger (config={}, target={})",
+        config_path_display,
+        config.connection.address
+    );
 
-    let db = Arc::new(Db::open(Path::new(&config.bot.db_path))?);
+    let db_path = Path::new(&config.bot.db_path);
+    if config.bot.db_path == ":memory:" {
+        log::info!("Database mode: in-memory (:memory:)");
+    } else {
+        let existed = db_path.exists();
+        if existed {
+            log::info!(
+                "Database mode: loading existing DB ({})",
+                config.bot.db_path
+            );
+        } else {
+            log::info!("Database mode: creating new DB ({})", config.bot.db_path);
+        }
+    }
+
+    let db = Arc::new(Db::open(db_path)?);
     log::info!("Database opened at {}", config.bot.db_path);
 
     let registry = modules::build_registry(&config);
