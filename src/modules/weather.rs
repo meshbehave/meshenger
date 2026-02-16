@@ -50,6 +50,42 @@ impl WeatherModule {
             "km/h"
         }
     }
+
+    fn is_imperial(&self) -> bool {
+        self.units == "imperial"
+    }
+
+    fn secondary_temp_symbol(&self) -> &str {
+        if self.is_imperial() {
+            "°C"
+        } else {
+            "°F"
+        }
+    }
+
+    fn secondary_wind_symbol(&self) -> &str {
+        if self.is_imperial() {
+            "km/h"
+        } else {
+            "mph"
+        }
+    }
+
+    fn secondary_temp_value(&self, primary: f64) -> f64 {
+        if self.is_imperial() {
+            (primary - 32.0) * (5.0 / 9.0)
+        } else {
+            primary * (9.0 / 5.0) + 32.0
+        }
+    }
+
+    fn secondary_wind_value(&self, primary: f64) -> f64 {
+        if self.is_imperial() {
+            primary * 1.609_344
+        } else {
+            primary * 0.621_371
+        }
+    }
 }
 
 fn wmo_code_to_description(code: u64) -> &'static str {
@@ -151,16 +187,22 @@ impl Module for WeatherModule {
         let wind = current["wind_speed_10m"].as_f64().unwrap_or(0.0);
 
         let conditions = wmo_code_to_description(weather_code);
+        let temp_secondary = self.secondary_temp_value(temp);
+        let wind_secondary = self.secondary_wind_value(wind);
 
         let text = format!(
-            "Weather{}: {:.0}{} {}\nHumidity: {:.0}% Wind: {:.0}{}",
+            "Weather{}: {:.0}{} / {:.0}{} {}\nHumidity: {:.0}% Wind: {:.0}{} / {:.0}{}",
             location_note,
             temp,
             self.temp_symbol(),
+            temp_secondary,
+            self.secondary_temp_symbol(),
             conditions,
             humidity,
             wind,
             self.wind_symbol(),
+            wind_secondary,
+            self.secondary_wind_symbol(),
         );
 
         Ok(Some(vec![Response {
@@ -200,6 +242,10 @@ mod tests {
         assert_eq!(module.temp_symbol(), "°C");
         assert_eq!(module.wind_unit(), "kmh");
         assert_eq!(module.wind_symbol(), "km/h");
+        assert_eq!(module.secondary_temp_symbol(), "°F");
+        assert_eq!(module.secondary_wind_symbol(), "mph");
+        assert!((module.secondary_temp_value(25.0) - 77.0).abs() < 0.01);
+        assert!((module.secondary_wind_value(10.0) - 6.21371).abs() < 0.01);
     }
 
     #[test]
@@ -209,6 +255,10 @@ mod tests {
         assert_eq!(module.temp_symbol(), "°F");
         assert_eq!(module.wind_unit(), "mph");
         assert_eq!(module.wind_symbol(), "mph");
+        assert_eq!(module.secondary_temp_symbol(), "°C");
+        assert_eq!(module.secondary_wind_symbol(), "km/h");
+        assert!((module.secondary_temp_value(77.0) - 25.0).abs() < 0.01);
+        assert!((module.secondary_wind_value(10.0) - 16.09344).abs() < 0.01);
     }
 
     #[test]
