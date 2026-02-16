@@ -50,7 +50,13 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    fn test_context(rssi: i32, snr: f32, hop_count: u32, hop_limit: u32, via_mqtt: bool) -> MessageContext {
+    fn test_context(
+        rssi: i32,
+        snr: f32,
+        hop_count: u32,
+        hop_limit: u32,
+        via_mqtt: bool,
+    ) -> MessageContext {
         MessageContext {
             sender_id: 0x12345678,
             sender_name: "TestNode".to_string(),
@@ -90,7 +96,10 @@ mod tests {
         let responses = result.unwrap();
 
         assert!(responses[0].text.contains("(via MQTT)"));
-        assert_eq!(responses[0].text, "Pong! RSSI: -80 SNR: 3.0 Hops: 2/5 (via MQTT)");
+        assert_eq!(
+            responses[0].text,
+            "Pong! RSSI: -80 SNR: 3.0 Hops: 2/5 (via MQTT)"
+        );
     }
 
     #[tokio::test]

@@ -1,17 +1,13 @@
+use crate::bridge::{MeshBridgeMessage, OutgoingBridgeMessage};
+use crate::message::{MeshEvent, MessageContext};
 use meshtastic::packet::PacketDestination;
 use meshtastic::protobufs::{self, from_radio, mesh_packet};
 use meshtastic::types::MeshChannel;
-use crate::bridge::{MeshBridgeMessage, OutgoingBridgeMessage};
-use crate::message::{MeshEvent, MessageContext};
 
 use super::*;
 
 impl Bot {
-    pub(super) async fn process_radio_packet(
-        &self,
-        my_node_id: u32,
-        packet: protobufs::FromRadio,
-    ) {
+    pub(super) async fn process_radio_packet(&self, my_node_id: u32, packet: protobufs::FromRadio) {
         let variant = match packet.payload_variant {
             Some(v) => v,
             None => return,
@@ -31,11 +27,7 @@ impl Bot {
     }
 
     /// Handle a message from an external bridge (Telegram, Discord, etc.)
-    pub(super) fn handle_bridge_message(
-        &self,
-        my_node_id: u32,
-        msg: OutgoingBridgeMessage,
-    ) {
+    pub(super) fn handle_bridge_message(&self, my_node_id: u32, msg: OutgoingBridgeMessage) {
         log::info!("Bridge message from {}: {}", msg.source, msg.text);
 
         let channel = match MeshChannel::new(msg.channel) {
@@ -59,11 +51,25 @@ impl Bot {
     }
 
     /// Extract RF metadata from a mesh packet for logging.
-    fn rf_metadata(mesh_packet: &protobufs::MeshPacket) -> (Option<i32>, Option<f32>, Option<u32>, Option<u32>) {
-        let rssi = if mesh_packet.rx_rssi != 0 { Some(mesh_packet.rx_rssi) } else { None };
-        let snr = if mesh_packet.rx_snr != 0.0 { Some(mesh_packet.rx_snr) } else { None };
+    fn rf_metadata(
+        mesh_packet: &protobufs::MeshPacket,
+    ) -> (Option<i32>, Option<f32>, Option<u32>, Option<u32>) {
+        let rssi = if mesh_packet.rx_rssi != 0 {
+            Some(mesh_packet.rx_rssi)
+        } else {
+            None
+        };
+        let snr = if mesh_packet.rx_snr != 0.0 {
+            Some(mesh_packet.rx_snr)
+        } else {
+            None
+        };
         let hop_count = mesh_packet.hop_start.checked_sub(mesh_packet.hop_limit);
-        let hop_start = if mesh_packet.hop_start > 0 { Some(mesh_packet.hop_start) } else { None };
+        let hop_start = if mesh_packet.hop_start > 0 {
+            Some(mesh_packet.hop_start)
+        } else {
+            None
+        };
         (rssi, snr, hop_count, hop_start)
     }
 
@@ -129,16 +135,39 @@ impl Bot {
                 self.log_incoming_packet(mesh_packet, rssi, snr, hop_count, hop_start, "telemetry");
             }
             protobufs::PortNum::TracerouteApp => {
-                self.log_incoming_packet(mesh_packet, rssi, snr, hop_count, hop_start, "traceroute");
+                self.log_incoming_packet(
+                    mesh_packet,
+                    rssi,
+                    snr,
+                    hop_count,
+                    hop_start,
+                    "traceroute",
+                );
             }
             protobufs::PortNum::NeighborinfoApp => {
-                self.log_incoming_packet(mesh_packet, rssi, snr, hop_count, hop_start, "neighborinfo");
+                self.log_incoming_packet(
+                    mesh_packet,
+                    rssi,
+                    snr,
+                    hop_count,
+                    hop_start,
+                    "neighborinfo",
+                );
             }
             protobufs::PortNum::RoutingApp => {
                 self.log_incoming_packet(mesh_packet, rssi, snr, hop_count, hop_start, "routing");
             }
             protobufs::PortNum::TextMessageApp => {
-                self.handle_text_message(my_node_id, mesh_packet, data, rssi, snr, hop_count, hop_start).await;
+                self.handle_text_message(
+                    my_node_id,
+                    mesh_packet,
+                    data,
+                    rssi,
+                    snr,
+                    hop_count,
+                    hop_start,
+                )
+                .await;
             }
             _ => {
                 self.log_incoming_packet(mesh_packet, rssi, snr, hop_count, hop_start, "other");
@@ -228,11 +257,7 @@ impl Bot {
             .await;
     }
 
-    pub(super) async fn handle_node_info(
-        &self,
-        my_node_id: u32,
-        node_info: &protobufs::NodeInfo,
-    ) {
+    pub(super) async fn handle_node_info(&self, my_node_id: u32, node_info: &protobufs::NodeInfo) {
         let node_id = node_info.num;
         let (long_name, short_name) = match &node_info.user {
             Some(user) => (user.long_name.clone(), user.short_name.clone()),
@@ -241,17 +266,11 @@ impl Bot {
 
         let via_mqtt = node_info.via_mqtt;
 
-        log::debug!(
-            "NodeInfo: !{:08x} {} ({})",
-            node_id,
-            long_name,
-            short_name
-        );
+        log::debug!("NodeInfo: !{:08x} {} ({})", node_id, long_name, short_name);
 
         // Log nodeinfo packet (no RF metadata on NodeInfo)
         let _ = self.db.log_packet(
-            node_id, None, 0, "", "in",
-            via_mqtt, None, None, None, None, "nodeinfo",
+            node_id, None, 0, "", "in", via_mqtt, None, None, None, None, "nodeinfo",
         );
 
         // Skip dispatching events for our own node
@@ -294,7 +313,10 @@ impl Bot {
 
         // Always upsert the node (welcome module may have already done this,
         // but upsert is idempotent and updates last_seen)
-        if let Err(e) = self.db.upsert_node(node_id, &short_name, &long_name, via_mqtt) {
+        if let Err(e) = self
+            .db
+            .upsert_node(node_id, &short_name, &long_name, via_mqtt)
+        {
             log::error!("Failed to upsert node: {}", e);
         }
 

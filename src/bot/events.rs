@@ -3,10 +3,7 @@ use crate::message::{MeshEvent, MessageContext};
 use super::*;
 
 impl Bot {
-    pub(super) async fn dispatch_deferred_events(
-        &self,
-        my_node_id: u32,
-    ) {
+    pub(super) async fn dispatch_deferred_events(&self, my_node_id: u32) {
         let events = self.startup_state.take_deferred();
 
         if events.is_empty() {
@@ -29,7 +26,10 @@ impl Bot {
                 self.dispatch_event_to_modules(event, my_node_id).await;
 
                 // Upsert after module dispatch (was deferred along with the event)
-                if let Err(e) = self.db.upsert_node(*node_id, short_name, long_name, *via_mqtt) {
+                if let Err(e) = self
+                    .db
+                    .upsert_node(*node_id, short_name, long_name, *via_mqtt)
+                {
                     log::error!("Failed to upsert deferred node: {}", e);
                 }
             }
@@ -39,7 +39,9 @@ impl Bot {
     /// Dispatch an event to all modules, queuing any responses.
     pub(super) async fn dispatch_event_to_modules(&self, event: &MeshEvent, my_node_id: u32) {
         let (node_id, long_name) = match event {
-            MeshEvent::NodeDiscovered { node_id, long_name, .. } => (*node_id, long_name.clone()),
+            MeshEvent::NodeDiscovered {
+                node_id, long_name, ..
+            } => (*node_id, long_name.clone()),
             MeshEvent::PositionUpdate { node_id, .. } => (*node_id, String::new()),
         };
 

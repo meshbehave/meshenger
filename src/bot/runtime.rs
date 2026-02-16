@@ -24,7 +24,10 @@ pub(super) struct BotPacketRouter {
 }
 
 impl PacketRouter<(), RouterError> for BotPacketRouter {
-    fn handle_packet_from_radio(&mut self, _packet: protobufs::FromRadio) -> Result<(), RouterError> {
+    fn handle_packet_from_radio(
+        &mut self,
+        _packet: protobufs::FromRadio,
+    ) -> Result<(), RouterError> {
         Ok(())
     }
 
@@ -39,9 +42,8 @@ impl PacketRouter<(), RouterError> for BotPacketRouter {
 
 impl Bot {
     pub async fn run(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let reconnect_delay = std::time::Duration::from_secs(
-            self.config.connection.reconnect_delay_secs,
-        );
+        let reconnect_delay =
+            std::time::Duration::from_secs(self.config.connection.reconnect_delay_secs);
 
         loop {
             match self.connect_and_run().await {
@@ -53,10 +55,7 @@ impl Bot {
                 }
             }
 
-            log::info!(
-                "Reconnecting in {} seconds...",
-                reconnect_delay.as_secs()
-            );
+            log::info!("Reconnecting in {} seconds...", reconnect_delay.as_secs());
             tokio::time::sleep(reconnect_delay).await;
         }
     }
@@ -76,7 +75,9 @@ impl Bot {
         let my_node_id = self.wait_for_my_node_id(&mut packet_rx).await?;
         log::info!("Bot node ID: !{:08x}", my_node_id);
 
-        let mut router = BotPacketRouter { node_id: my_node_id };
+        let mut router = BotPacketRouter {
+            node_id: my_node_id,
+        };
 
         self.event_loop(my_node_id, &mut packet_rx, configured_api, &mut router)
             .await
@@ -115,9 +116,8 @@ impl Bot {
         let send_timer = tokio::time::sleep(send_delay);
         tokio::pin!(send_timer);
         let traceroute_enabled = self.config.traceroute_probe.enabled;
-        let traceroute_interval = std::time::Duration::from_secs(
-            self.config.traceroute_probe.interval_secs.max(60),
-        );
+        let traceroute_interval =
+            std::time::Duration::from_secs(self.config.traceroute_probe.interval_secs.max(60));
         let traceroute_timer = tokio::time::sleep(traceroute_interval);
         tokio::pin!(traceroute_timer);
 
@@ -222,10 +222,10 @@ impl Bot {
             return;
         }
 
-        let target = match self.db.recent_rf_node_missing_hops(
-            cfg.recent_seen_within_secs,
-            Some(my_node_id),
-        ) {
+        let target = match self
+            .db
+            .recent_rf_node_missing_hops(cfg.recent_seen_within_secs, Some(my_node_id))
+        {
             Ok(Some(node_id)) => node_id,
             Ok(None) => return,
             Err(e) => {
@@ -241,13 +241,19 @@ impl Bot {
         let channel = match MeshChannel::new(cfg.mesh_channel) {
             Ok(ch) => ch,
             Err(e) => {
-                log::error!("Invalid traceroute mesh_channel {}: {}", cfg.mesh_channel, e);
+                log::error!(
+                    "Invalid traceroute mesh_channel {}: {}",
+                    cfg.mesh_channel,
+                    e
+                );
                 return;
             }
         };
 
         self.queue_message(OutgoingMeshMessage {
-            kind: OutgoingKind::Traceroute { target_node: target },
+            kind: OutgoingKind::Traceroute {
+                target_node: target,
+            },
             text: String::new(),
             destination: PacketDestination::Node(NodeId::from(target)),
             channel,

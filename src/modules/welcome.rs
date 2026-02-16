@@ -177,8 +177,14 @@ mod tests {
     #[test]
     fn test_format_message() {
         let module = create_module(vec![]);
-        assert_eq!(module.format_message("Hello, {name}!", "Alice"), "Hello, Alice!");
-        assert_eq!(module.format_message("Hi {name}, welcome {name}!", "Bob"), "Hi Bob, welcome Bob!");
+        assert_eq!(
+            module.format_message("Hello, {name}!", "Alice"),
+            "Hello, Alice!"
+        );
+        assert_eq!(
+            module.format_message("Hi {name}, welcome {name}!", "Bob"),
+            "Hi Bob, welcome Bob!"
+        );
     }
 
     #[tokio::test]
@@ -199,7 +205,10 @@ mod tests {
         let responses = result.unwrap();
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0].text, "Welcome, Alice!");
-        assert!(matches!(responses[0].destination, Destination::Node(0x12345678)));
+        assert!(matches!(
+            responses[0].destination,
+            Destination::Node(0x12345678)
+        ));
     }
 
     #[tokio::test]

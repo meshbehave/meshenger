@@ -1,5 +1,5 @@
-use super::*;
 use super::outgoing::chunk_message;
+use super::*;
 use crate::bridge::OutgoingBridgeMessage;
 use crate::config::*;
 use crate::message::{Destination, MessageContext, Response};
@@ -129,7 +129,11 @@ fn test_queue_message_ordering() {
         });
     }
 
-    let mut queue = bot.outgoing.snapshot().into_iter().collect::<std::collections::VecDeque<_>>();
+    let mut queue = bot
+        .outgoing
+        .snapshot()
+        .into_iter()
+        .collect::<std::collections::VecDeque<_>>();
     assert_eq!(queue.len(), 5);
     for i in 0..5 {
         let msg = queue.pop_front().unwrap();
@@ -156,7 +160,10 @@ fn test_queue_responses_chunking() {
     bot.queue_responses(&ctx, &responses, my_node_id);
 
     let queue = bot.outgoing.snapshot();
-    assert!(queue.len() > 1, "Long message should be chunked into multiple queue entries");
+    assert!(
+        queue.len() > 1,
+        "Long message should be chunked into multiple queue entries"
+    );
 
     // Verify all chunks are within the limit
     for msg in &queue {
@@ -255,7 +262,15 @@ fn test_queue_empty_response_not_enqueued() {
 fn test_chunk_message_utf8_safe() {
     let text = "éééé";
     let chunks = chunk_message(text, 3);
-    assert_eq!(chunks, vec!["é".to_string(), "é".to_string(), "é".to_string(), "é".to_string()]);
+    assert_eq!(
+        chunks,
+        vec![
+            "é".to_string(),
+            "é".to_string(),
+            "é".to_string(),
+            "é".to_string()
+        ]
+    );
 }
 
 #[test]
@@ -286,7 +301,8 @@ async fn test_dispatch_command_help_enqueues_reply() {
     let mut ctx = test_ctx(0x12345678, 0);
     ctx.packet_id = 42;
 
-    bot.dispatch_command_from_text(1, &ctx, "!help", false).await;
+    bot.dispatch_command_from_text(1, &ctx, "!help", false)
+        .await;
 
     let queue = bot.outgoing.snapshot();
     assert_eq!(queue.len(), 1);
@@ -301,7 +317,8 @@ async fn test_dispatch_command_module_sets_reply_id_when_missing() {
     let mut ctx = test_ctx(0x11111111, 0);
     ctx.packet_id = 99;
 
-    bot.dispatch_command_from_text(1, &ctx, "!echo hello", false).await;
+    bot.dispatch_command_from_text(1, &ctx, "!echo hello", false)
+        .await;
 
     let queue = bot.outgoing.snapshot();
     assert_eq!(queue.len(), 1);
@@ -315,7 +332,8 @@ async fn test_dispatch_command_ignores_non_prefixed_text() {
     let bot = test_bot_with_module(Box::new(TestCommandModule));
     let ctx = test_ctx(0x22222222, 0);
 
-    bot.dispatch_command_from_text(1, &ctx, "echo hello", false).await;
+    bot.dispatch_command_from_text(1, &ctx, "echo hello", false)
+        .await;
 
     let queue = bot.outgoing.snapshot();
     assert!(queue.is_empty());

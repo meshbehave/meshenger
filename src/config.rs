@@ -218,9 +218,6 @@ impl Config {
     }
 
     pub fn is_module_enabled(&self, name: &str) -> bool {
-        self.modules
-            .get(name)
-            .map(|m| m.enabled)
-            .unwrap_or(false)
+        self.modules.get(name).map(|m| m.enabled).unwrap_or(false)
     }
 }

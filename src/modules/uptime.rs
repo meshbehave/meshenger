@@ -97,7 +97,10 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let ctx = test_context();
 
-        let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
+        let result = module
+            .handle_command("uptime", "", &ctx, &db)
+            .await
+            .unwrap();
         assert!(result.is_some());
 
         let responses = result.unwrap();
@@ -116,11 +119,33 @@ mod tests {
         let ctx = test_context();
 
         // Log some messages
-        db.log_packet(0x12345678, None, 0, "test", "in", false, None, None, None, None, "text").unwrap();
-        db.log_packet(0x12345678, None, 0, "test", "in", false, None, None, None, None, "text").unwrap();
-        db.log_packet(0x12345678, Some(0xaaaaaaaa), 0, "reply", "out", false, None, None, None, None, "text").unwrap();
+        db.log_packet(
+            0x12345678, None, 0, "test", "in", false, None, None, None, None, "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0x12345678, None, 0, "test", "in", false, None, None, None, None, "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0x12345678,
+            Some(0xaaaaaaaa),
+            0,
+            "reply",
+            "out",
+            false,
+            None,
+            None,
+            None,
+            None,
+            "text",
+        )
+        .unwrap();
 
-        let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
+        let result = module
+            .handle_command("uptime", "", &ctx, &db)
+            .await
+            .unwrap();
         let text = &result.unwrap()[0].text;
 
         assert!(text.contains("2 in"));
@@ -138,7 +163,10 @@ mod tests {
         db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
         db.upsert_node(0xCCCCCCCC, "C", "Charlie", false).unwrap();
 
-        let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
+        let result = module
+            .handle_command("uptime", "", &ctx, &db)
+            .await
+            .unwrap();
         let text = &result.unwrap()[0].text;
 
         assert!(text.contains("Nodes seen: 3"));
@@ -151,7 +179,10 @@ mod tests {
         let mut ctx = test_context();
         ctx.channel = 5;
 
-        let result = module.handle_command("uptime", "", &ctx, &db).await.unwrap();
+        let result = module
+            .handle_command("uptime", "", &ctx, &db)
+            .await
+            .unwrap();
         let responses = result.unwrap();
 
         assert_eq!(responses[0].channel, 5);

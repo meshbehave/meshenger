@@ -8,7 +8,9 @@ use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use tokio::sync::mpsc;
 
-use crate::bridge::{MeshBridgeMessage, MeshMessageReceiver, OutgoingBridgeMessage, OutgoingMessageSender};
+use crate::bridge::{
+    MeshBridgeMessage, MeshMessageReceiver, OutgoingBridgeMessage, OutgoingMessageSender,
+};
 
 /// Direction of message bridging.
 #[derive(Debug, Clone, PartialEq)]
@@ -178,7 +180,10 @@ impl TelegramBridge {
 
         // Create a handler for incoming messages
         let handler = Update::filter_message().endpoint(
-            move |_bot: Bot, msg: Message, config: Arc<TelegramBridgeConfig>, tx: mpsc::Sender<OutgoingBridgeMessage>| async move {
+            move |_bot: Bot,
+                  msg: Message,
+                  config: Arc<TelegramBridgeConfig>,
+                  tx: mpsc::Sender<OutgoingBridgeMessage>| async move {
                 // Only process messages from the configured chat
                 if msg.chat.id.0 != config.chat_id {
                     return respond(());
@@ -194,11 +199,7 @@ impl TelegramBridge {
                 let sender_name = msg
                     .from
                     .as_ref()
-                    .map(|u| {
-                        u.username
-                            .clone()
-                            .unwrap_or_else(|| u.first_name.clone())
-                    })
+                    .map(|u| u.username.clone().unwrap_or_else(|| u.first_name.clone()))
                     .unwrap_or_else(|| "unknown".to_string());
 
                 // Format message for mesh

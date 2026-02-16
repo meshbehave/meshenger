@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::response::Json;
 use axum::response::sse::{Event, Sse};
+use axum::response::Json;
 use axum::routing::get;
 use axum::Router;
 use futures_util::stream::Stream;
@@ -19,12 +19,10 @@ use crate::config::Config;
 use crate::db::{Db, MqttFilter};
 
 fn to_json<T: Serialize>(value: T) -> Result<Json<serde_json::Value>, StatusCode> {
-    serde_json::to_value(value)
-        .map(Json)
-        .map_err(|e| {
-            log::error!("JSON serialization error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })
+    serde_json::to_value(value).map(Json).map_err(|e| {
+        log::error!("JSON serialization error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })
 }
 
 #[derive(Clone)]
@@ -113,16 +111,14 @@ impl Dashboard {
 
         // Serve static files from web/dist/ if the directory exists (prod mode)
         let app = if std::path::Path::new("web/dist/index.html").exists() {
-            let serve_dir = ServeDir::new("web/dist")
-                .fallback(ServeFile::new("web/dist/index.html"));
+            let serve_dir =
+                ServeDir::new("web/dist").fallback(ServeFile::new("web/dist/index.html"));
             api_routes
                 .fallback_service(serve_dir)
                 .layer(CorsLayer::permissive())
                 .with_state(state)
         } else {
-            api_routes
-                .layer(CorsLayer::permissive())
-                .with_state(state)
+            api_routes.layer(CorsLayer::permissive()).with_state(state)
         };
 
         let listener = tokio::net::TcpListener::bind(bind).await?;
@@ -152,10 +148,13 @@ async fn handle_nodes(
     Query(params): Query<HoursParam>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filter = MqttFilter::from_str(&params.mqtt);
-    let nodes = state.db.dashboard_nodes(params.hours, filter).map_err(|e| {
-        log::error!("Dashboard nodes error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let nodes = state
+        .db
+        .dashboard_nodes(params.hours, filter)
+        .map_err(|e| {
+            log::error!("Dashboard nodes error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     to_json(nodes)
 }
 
@@ -224,13 +223,10 @@ async fn handle_hops(
     Query(params): Query<HoursParam>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let filter = MqttFilter::from_str(&params.mqtt);
-    let buckets = state
-        .db
-        .dashboard_hops(params.hours, filter)
-        .map_err(|e| {
-            log::error!("Dashboard hops error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+    let buckets = state.db.dashboard_hops(params.hours, filter).map_err(|e| {
+        log::error!("Dashboard hops error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     to_json(buckets)
 }
 
@@ -244,9 +240,7 @@ async fn handle_positions(
     to_json(positions)
 }
 
-async fn handle_queue(
-    State(state): State<AppState>,
-) -> Json<QueueResponse> {
+async fn handle_queue(State(state): State<AppState>) -> Json<QueueResponse> {
     Json(QueueResponse {
         depth: state.queue_depth.load(Ordering::Relaxed),
     })

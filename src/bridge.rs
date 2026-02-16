@@ -38,7 +38,11 @@ pub type OutgoingMessageReceiver = mpsc::Receiver<OutgoingBridgeMessage>;
 /// - `MeshMessageSender` - Bot uses this to broadcast mesh messages to all bridges
 /// - `OutgoingMessageSender` - Bridges clone this to send messages to the mesh
 /// - `OutgoingMessageReceiver` - Bot uses this to receive messages from bridges
-pub fn create_bridge_channels() -> (MeshMessageSender, OutgoingMessageSender, OutgoingMessageReceiver) {
+pub fn create_bridge_channels() -> (
+    MeshMessageSender,
+    OutgoingMessageSender,
+    OutgoingMessageReceiver,
+) {
     let (mesh_tx, _) = broadcast::channel(100);
     let (outgoing_tx, outgoing_rx) = mpsc::channel(100);
     (mesh_tx, outgoing_tx, outgoing_rx)

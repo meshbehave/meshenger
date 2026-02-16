@@ -22,6 +22,9 @@ impl TracerouteState {
     }
 
     pub(super) fn mark_sent(&self, target: u32) {
-        self.last_sent.lock().unwrap().insert(target, Instant::now());
+        self.last_sent
+            .lock()
+            .unwrap()
+            .insert(target, Instant::now());
     }
 }

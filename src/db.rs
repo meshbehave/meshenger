@@ -29,7 +29,6 @@ impl MqttFilter {
             MqttFilter::MqttOnly => " AND via_mqtt = 1",
         }
     }
-
 }
 
 #[derive(Debug, Serialize)]
@@ -183,7 +182,10 @@ impl Db {
         Ok(())
     }
 
-    pub fn is_node_new(&self, node_id: u32) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn is_node_new(
+        &self,
+        node_id: u32,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM nodes WHERE node_id = ?1",
@@ -212,7 +214,10 @@ impl Db {
         }
     }
 
-    pub fn mark_welcomed(&self, node_id: u32) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn mark_welcomed(
+        &self,
+        node_id: u32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().timestamp();
         conn.execute(
@@ -282,7 +287,10 @@ impl Db {
         Ok(nodes)
     }
 
-    pub fn get_node_name(&self, node_id: u32) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn get_node_name(
+        &self,
+        node_id: u32,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let result: Result<(String, String), _> = conn.query_row(
             "SELECT long_name, short_name FROM nodes WHERE node_id = ?1",
@@ -334,7 +342,10 @@ impl Db {
         }
     }
 
-    pub fn message_count(&self, direction: &str) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn message_count(
+        &self,
+        direction: &str,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM packets WHERE direction = ?1",
@@ -346,15 +357,14 @@ impl Db {
 
     pub fn node_count(&self) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM nodes",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))?;
         Ok(count as u64)
     }
 
-    pub fn find_node_by_name(&self, name: &str) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn find_node_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
         // Try parsing as node ID (hex with/without prefix, or decimal)
         if let Some(id) = parse_node_id(name) {
             let conn = self.conn.lock().unwrap();
@@ -460,10 +470,19 @@ impl Db {
 
     // --- Dashboard queries ---
 
-    pub fn dashboard_overview(&self, hours: u32, filter: MqttFilter, bot_name: &str) -> Result<DashboardOverview, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_overview(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+        bot_name: &str,
+    ) -> Result<DashboardOverview, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let node_count: i64 = conn.query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get(0))?;
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         let mqtt_clause = filter.sql_clause();
 
@@ -503,9 +522,17 @@ impl Db {
         })
     }
 
-    pub fn dashboard_nodes(&self, hours: u32, filter: MqttFilter) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_nodes(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         let where_clause = match filter {
             MqttFilter::All => String::new(),
@@ -583,9 +610,17 @@ impl Db {
     }
 
     /// Throughput of text messages only (existing chart).
-    pub fn dashboard_throughput(&self, hours: u32, filter: MqttFilter) -> Result<Vec<ThroughputBucket>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_throughput(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<ThroughputBucket>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         let bucket_expr = if hours > 48 {
             "strftime('%Y-%m-%d', timestamp, 'unixepoch')"
@@ -626,7 +661,11 @@ impl Db {
         packet_types: Option<&[String]>,
     ) -> Result<Vec<ThroughputBucket>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         let bucket_expr = if hours > 48 {
             "strftime('%Y-%m-%d', timestamp, 'unixepoch')"
@@ -635,8 +674,14 @@ impl Db {
         };
 
         const VALID_PACKET_TYPES: &[&str] = &[
-            "text", "position", "telemetry", "nodeinfo",
-            "traceroute", "neighborinfo", "routing", "other",
+            "text",
+            "position",
+            "telemetry",
+            "nodeinfo",
+            "traceroute",
+            "neighborinfo",
+            "routing",
+            "other",
         ];
 
         let type_clause = match packet_types {
@@ -680,9 +725,17 @@ impl Db {
         Ok(buckets)
     }
 
-    pub fn dashboard_rssi(&self, hours: u32, filter: MqttFilter) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_rssi(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         // Bucket RSSI into 10 dBm ranges
         let query = format!(
@@ -708,9 +761,17 @@ impl Db {
         Ok(buckets)
     }
 
-    pub fn dashboard_snr(&self, hours: u32, filter: MqttFilter) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_snr(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         // Bucket SNR into 2.5 dB ranges
         let query = format!(
@@ -736,9 +797,17 @@ impl Db {
         Ok(buckets)
     }
 
-    pub fn dashboard_hops(&self, hours: u32, filter: MqttFilter) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_hops(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<DistributionBucket>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
-        let since = if hours == 0 { 0 } else { Utc::now().timestamp() - (hours as i64 * 3600) };
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
 
         let query = format!(
             "SELECT
@@ -763,7 +832,9 @@ impl Db {
         Ok(buckets)
     }
 
-    pub fn dashboard_positions(&self) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn dashboard_positions(
+        &self,
+    ) -> Result<Vec<DashboardNode>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "WITH rf_last AS (
@@ -848,7 +919,8 @@ mod tests {
     fn test_upsert_and_get_node() {
         let db = setup_db();
 
-        db.upsert_node(0x12345678, "ABCD", "Alice's Node", false).unwrap();
+        db.upsert_node(0x12345678, "ABCD", "Alice's Node", false)
+            .unwrap();
 
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -871,7 +943,8 @@ mod tests {
     #[test]
     fn test_get_node_name_long() {
         let db = setup_db();
-        db.upsert_node(0x12345678, "ABCD", "Alice's Node", false).unwrap();
+        db.upsert_node(0x12345678, "ABCD", "Alice's Node", false)
+            .unwrap();
 
         let name = db.get_node_name(0x12345678).unwrap();
         assert_eq!(name, "Alice's Node");
@@ -917,7 +990,10 @@ mod tests {
         // Use a number with digits > 9 to avoid hex ambiguity
         db.upsert_node(3954221518, "ABCD", "Alice", false).unwrap();
 
-        assert_eq!(db.find_node_by_name("3954221518").unwrap(), Some(3954221518));
+        assert_eq!(
+            db.find_node_by_name("3954221518").unwrap(),
+            Some(3954221518)
+        );
     }
 
     #[test]
@@ -942,8 +1018,34 @@ mod tests {
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
         db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
 
-        db.log_packet(0xAAAAAAAA, None, 0, "a1", "in", false, Some(-80), Some(5.0), Some(2), Some(7), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "a2", "in", false, Some(-78), Some(5.2), Some(4), Some(7), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "a1",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(2),
+            Some(7),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "a2",
+            "in",
+            false,
+            Some(-78),
+            Some(5.2),
+            Some(4),
+            Some(7),
+            "text",
+        )
+        .unwrap();
 
         let nodes = db.get_recent_nodes_with_last_hop(10).unwrap();
         assert_eq!(nodes.len(), 2);
@@ -963,7 +1065,20 @@ mod tests {
         db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
 
         // Bob already has hop metadata
-        db.log_packet(0xBBBBBBBB, None, 0, "hi", "in", false, Some(-80), Some(5.0), Some(2), Some(3), "text").unwrap();
+        db.log_packet(
+            0xBBBBBBBB,
+            None,
+            0,
+            "hi",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         let candidate = db.recent_rf_node_missing_hops(3600, None).unwrap();
         assert_eq!(candidate, Some(0xAAAAAAAA));
@@ -1021,9 +1136,48 @@ mod tests {
         assert_eq!(db.message_count("in").unwrap(), 0);
         assert_eq!(db.message_count("out").unwrap(), 0);
 
-        db.log_packet(0x12345678, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0x12345678, None, 0, "World", "in", false, Some(-90), Some(3.0), Some(2), Some(3), "text").unwrap();
-        db.log_packet(0x12345678, Some(0xaaaaaaaa), 0, "Reply", "out", false, None, None, None, None, "text").unwrap();
+        db.log_packet(
+            0x12345678,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0x12345678,
+            None,
+            0,
+            "World",
+            "in",
+            false,
+            Some(-90),
+            Some(3.0),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0x12345678,
+            Some(0xaaaaaaaa),
+            0,
+            "Reply",
+            "out",
+            false,
+            None,
+            None,
+            None,
+            None,
+            "text",
+        )
+        .unwrap();
 
         assert_eq!(db.message_count("in").unwrap(), 2);
         assert_eq!(db.message_count("out").unwrap(), 1);
@@ -1042,7 +1196,8 @@ mod tests {
         assert_eq!(db.node_count().unwrap(), 2);
 
         // Upsert same node doesn't increase count
-        db.upsert_node(0xAAAAAAAA, "A", "Alice Updated", false).unwrap();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice Updated", false)
+            .unwrap();
         assert_eq!(db.node_count().unwrap(), 2);
     }
 
@@ -1052,8 +1207,10 @@ mod tests {
     fn test_upsert_updates_existing() {
         let db = setup_db();
 
-        db.upsert_node(0x12345678, "OLD", "Old Name", false).unwrap();
-        db.upsert_node(0x12345678, "NEW", "New Name", false).unwrap();
+        db.upsert_node(0x12345678, "OLD", "Old Name", false)
+            .unwrap();
+        db.upsert_node(0x12345678, "NEW", "New Name", false)
+            .unwrap();
 
         let nodes = db.get_all_nodes().unwrap();
         assert_eq!(nodes.len(), 1);
@@ -1093,13 +1250,67 @@ mod tests {
         let db = setup_db();
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
         db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xBBBBBBBB, None, 0, "Hi", "in", true, Some(-70), Some(8.0), Some(0), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, Some(0xBBBBBBBB), 0, "Reply", "out", false, None, None, None, None, "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xBBBBBBBB,
+            None,
+            0,
+            "Hi",
+            "in",
+            true,
+            Some(-70),
+            Some(8.0),
+            Some(0),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            Some(0xBBBBBBBB),
+            0,
+            "Reply",
+            "out",
+            false,
+            None,
+            None,
+            None,
+            None,
+            "text",
+        )
+        .unwrap();
         // Non-text packet
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, Some(-75), Some(6.0), Some(1), Some(3), "position").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "",
+            "in",
+            false,
+            Some(-75),
+            Some(6.0),
+            Some(1),
+            Some(3),
+            "position",
+        )
+        .unwrap();
 
-        let overview = db.dashboard_overview(24, MqttFilter::All, "TestBot").unwrap();
+        let overview = db
+            .dashboard_overview(24, MqttFilter::All, "TestBot")
+            .unwrap();
         assert_eq!(overview.node_count, 2);
         assert_eq!(overview.messages_in, 2);
         assert_eq!(overview.messages_out, 1);
@@ -1107,10 +1318,14 @@ mod tests {
         assert_eq!(overview.packets_out, 1);
         assert_eq!(overview.bot_name, "TestBot");
 
-        let local = db.dashboard_overview(24, MqttFilter::LocalOnly, "TestBot").unwrap();
+        let local = db
+            .dashboard_overview(24, MqttFilter::LocalOnly, "TestBot")
+            .unwrap();
         assert_eq!(local.messages_in, 1);
 
-        let mqtt = db.dashboard_overview(24, MqttFilter::MqttOnly, "TestBot").unwrap();
+        let mqtt = db
+            .dashboard_overview(24, MqttFilter::MqttOnly, "TestBot")
+            .unwrap();
         assert_eq!(mqtt.messages_in, 1);
     }
 
@@ -1119,8 +1334,34 @@ mod tests {
         let db = setup_db();
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
         db.update_position(0xAAAAAAAA, 25.0, 121.0).unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(2), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "Again", "in", false, Some(-79), Some(5.2), Some(1), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Again",
+            "in",
+            false,
+            Some(-79),
+            Some(5.2),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         let nodes = db.dashboard_nodes(24, MqttFilter::All).unwrap();
         assert_eq!(nodes.len(), 1);
@@ -1157,8 +1398,34 @@ mod tests {
         let db = setup_db();
         db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
 
-        db.log_packet(0xAAAAAAAA, None, 0, "old", "in", false, Some(-90), Some(2.0), Some(3), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "new", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "old",
+            "in",
+            false,
+            Some(-90),
+            Some(2.0),
+            Some(3),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "new",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         {
             let conn = db.conn.lock().unwrap();
@@ -1166,7 +1433,8 @@ mod tests {
             conn.execute(
                 "UPDATE packets SET timestamp = ?1 WHERE text = 'old'",
                 params![old_ts],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let nodes_24h = db.dashboard_nodes(24, MqttFilter::All).unwrap();
@@ -1187,10 +1455,49 @@ mod tests {
     #[test]
     fn test_dashboard_throughput() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, Some(0xBBBBBBBB), 0, "Reply", "out", false, None, None, None, None, "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            Some(0xBBBBBBBB),
+            0,
+            "Reply",
+            "out",
+            false,
+            None,
+            None,
+            None,
+            None,
+            "text",
+        )
+        .unwrap();
         // Non-text packets should not appear in text throughput
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, Some(-75), Some(6.0), Some(1), Some(3), "position").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "",
+            "in",
+            false,
+            Some(-75),
+            Some(6.0),
+            Some(1),
+            Some(3),
+            "position",
+        )
+        .unwrap();
 
         let buckets = db.dashboard_throughput(24, MqttFilter::All).unwrap();
         assert!(!buckets.is_empty());
@@ -1203,18 +1510,61 @@ mod tests {
     #[test]
     fn test_dashboard_packet_throughput() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, Some(-75), Some(6.0), Some(1), Some(3), "position").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, Some(-72), Some(7.0), Some(0), Some(3), "telemetry").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "",
+            "in",
+            false,
+            Some(-75),
+            Some(6.0),
+            Some(1),
+            Some(3),
+            "position",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "",
+            "in",
+            false,
+            Some(-72),
+            Some(7.0),
+            Some(0),
+            Some(3),
+            "telemetry",
+        )
+        .unwrap();
 
         // All types
-        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, None).unwrap();
+        let buckets = db
+            .dashboard_packet_throughput(24, MqttFilter::All, None)
+            .unwrap();
         let total_in: u64 = buckets.iter().map(|b| b.incoming).sum();
         assert_eq!(total_in, 3);
 
         // Filter to specific types
         let types = vec!["position".to_string(), "telemetry".to_string()];
-        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, Some(&types)).unwrap();
+        let buckets = db
+            .dashboard_packet_throughput(24, MqttFilter::All, Some(&types))
+            .unwrap();
         let total_in: u64 = buckets.iter().map(|b| b.incoming).sum();
         assert_eq!(total_in, 2);
     }
@@ -1222,8 +1572,34 @@ mod tests {
     #[test]
     fn test_dashboard_rssi() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "World", "in", false, Some(-85), Some(3.0), Some(2), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "World",
+            "in",
+            false,
+            Some(-85),
+            Some(3.0),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         let buckets = db.dashboard_rssi(24, MqttFilter::All).unwrap();
         assert!(!buckets.is_empty());
@@ -1234,8 +1610,34 @@ mod tests {
     #[test]
     fn test_dashboard_hops() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "World", "in", false, Some(-85), Some(3.0), Some(2), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "World",
+            "in",
+            false,
+            Some(-85),
+            Some(3.0),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         let buckets = db.dashboard_hops(24, MqttFilter::All).unwrap();
         assert_eq!(buckets.len(), 2);
@@ -1257,22 +1659,68 @@ mod tests {
     #[test]
     fn test_log_packet_with_rf_metadata() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", true, Some(-90), Some(5.5), Some(2), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            true,
+            Some(-90),
+            Some(5.5),
+            Some(2),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         // Verify it was stored by querying back
-        let overview = db.dashboard_overview(24, MqttFilter::MqttOnly, "Test").unwrap();
+        let overview = db
+            .dashboard_overview(24, MqttFilter::MqttOnly, "Test")
+            .unwrap();
         assert_eq!(overview.messages_in, 1);
 
-        let local = db.dashboard_overview(24, MqttFilter::LocalOnly, "Test").unwrap();
+        let local = db
+            .dashboard_overview(24, MqttFilter::LocalOnly, "Test")
+            .unwrap();
         assert_eq!(local.messages_in, 0);
     }
 
     #[test]
     fn test_log_packet_types() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, Some(-75), Some(6.0), Some(1), Some(3), "position").unwrap();
-        db.log_packet(0xAAAAAAAA, None, 0, "", "in", false, None, None, None, None, "nodeinfo").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "",
+            "in",
+            false,
+            Some(-75),
+            Some(6.0),
+            Some(1),
+            Some(3),
+            "position",
+        )
+        .unwrap();
+        db.log_packet(
+            0xAAAAAAAA, None, 0, "", "in", false, None, None, None, None, "nodeinfo",
+        )
+        .unwrap();
 
         let overview = db.dashboard_overview(24, MqttFilter::All, "Test").unwrap();
         assert_eq!(overview.messages_in, 1); // Only text
@@ -1282,16 +1730,33 @@ mod tests {
     #[test]
     fn test_packet_throughput_rejects_invalid_types() {
         let db = setup_db();
-        db.log_packet(0xAAAAAAAA, None, 0, "Hello", "in", false, Some(-80), Some(5.0), Some(1), Some(3), "text").unwrap();
+        db.log_packet(
+            0xAAAAAAAA,
+            None,
+            0,
+            "Hello",
+            "in",
+            false,
+            Some(-80),
+            Some(5.0),
+            Some(1),
+            Some(3),
+            "text",
+        )
+        .unwrap();
 
         // Invalid type names should be silently filtered out, returning empty
         let types = vec!["'; DROP TABLE packets; --".to_string()];
-        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, Some(&types)).unwrap();
+        let buckets = db
+            .dashboard_packet_throughput(24, MqttFilter::All, Some(&types))
+            .unwrap();
         assert!(buckets.is_empty());
 
         // Mix of valid and invalid — only valid types are used
         let types = vec!["text".to_string(), "fake_injection".to_string()];
-        let buckets = db.dashboard_packet_throughput(24, MqttFilter::All, Some(&types)).unwrap();
+        let buckets = db
+            .dashboard_packet_throughput(24, MqttFilter::All, Some(&types))
+            .unwrap();
         let total_in: u64 = buckets.iter().map(|b| b.incoming).sum();
         assert_eq!(total_in, 1);
     }

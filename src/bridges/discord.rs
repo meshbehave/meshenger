@@ -11,7 +11,9 @@ use serenity::async_trait;
 use serenity::Client;
 use tokio::sync::RwLock;
 
-use crate::bridge::{MeshBridgeMessage, MeshMessageReceiver, OutgoingBridgeMessage, OutgoingMessageSender};
+use crate::bridge::{
+    MeshBridgeMessage, MeshMessageReceiver, OutgoingBridgeMessage, OutgoingMessageSender,
+};
 
 /// Direction of message bridging.
 #[derive(Debug, Clone, PartialEq)]

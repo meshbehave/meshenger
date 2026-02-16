@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use bridge::create_bridge_channels;
 use bridges::discord::BridgeDirection as DiscordDirection;
-use bridges::{BridgeDirection, DiscordBridge, DiscordBridgeConfig, TelegramBridge, TelegramBridgeConfig};
+use bridges::{
+    BridgeDirection, DiscordBridge, DiscordBridgeConfig, TelegramBridge, TelegramBridgeConfig,
+};
 use config::Config;
 use dashboard::Dashboard;
 use db::Db;
@@ -46,10 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     log::info!("Database opened at {}", config.bot.db_path);
 
     let registry = modules::build_registry(&config);
-    log::info!(
-        "Registered {} module(s)",
-        registry.all().len()
-    );
+    log::info!("Registered {} module(s)", registry.all().len());
 
     // SSE broadcast channel for dashboard real-time updates
     let (sse_tx, _) = tokio::sync::broadcast::channel::<()>(16);

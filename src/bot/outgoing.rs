@@ -75,7 +75,12 @@ impl OutgoingQueue {
 }
 
 impl Bot {
-    pub(super) fn queue_responses(&self, ctx: &MessageContext, responses: &[Response], my_node_id: u32) {
+    pub(super) fn queue_responses(
+        &self,
+        ctx: &MessageContext,
+        responses: &[Response],
+        my_node_id: u32,
+    ) {
         for response in responses {
             let destination = match &response.destination {
                 Destination::Sender => PacketDestination::Node(NodeId::from(ctx.sender_id)),
@@ -165,7 +170,7 @@ impl Bot {
                         false, // want_response
                         true,  // echo_response
                         msg.reply_id,
-                        None,  // emoji
+                        None, // emoji
                     )
                     .await
                 } else {
