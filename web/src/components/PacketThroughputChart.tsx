@@ -12,6 +12,7 @@ const filterOptions: { value: PacketTypeFilter; label: string }[] = [
   { value: "text", label: "Text" },
   { value: "position", label: "Position" },
   { value: "telemetry", label: "Telemetry" },
+  { value: "traceroute", label: "Traceroute" },
   { value: "other", label: "Other" },
 ];
 

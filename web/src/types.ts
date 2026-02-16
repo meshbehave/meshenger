@@ -46,4 +46,5 @@ export type PacketTypeFilter =
   | "text"
   | "position"
   | "telemetry"
+  | "traceroute"
   | "other";
