@@ -67,6 +67,7 @@ Implemented:
 
 ## References
 
+- Commit: `70f259c`
 - `src/bot/incoming.rs`
 - `src/db.rs`
 - `src/dashboard.rs`
