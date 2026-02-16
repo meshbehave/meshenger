@@ -5,6 +5,7 @@ import type {
   ThroughputBucket,
   DistributionBucket,
   QueueDepth,
+  TracerouteRequester,
   MqttFilterValue,
   HoursValue,
   PacketTypeFilter,
@@ -19,6 +20,7 @@ import { SnrChart } from "./components/SnrChart";
 import { HopChart } from "./components/HopChart";
 import { NodeTable } from "./components/NodeTable";
 import { NodeMap } from "./components/NodeMap";
+import { TracerouteRequesterTable } from "./components/TracerouteRequesterTable";
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -36,6 +38,9 @@ function App() {
   const [snr, setSnr] = useState<DistributionBucket[] | null>(null);
   const [hops, setHops] = useState<DistributionBucket[] | null>(null);
   const [queue, setQueue] = useState<QueueDepth | null>(null);
+  const [tracerouteRequesters, setTracerouteRequesters] = useState<
+    TracerouteRequester[] | null
+  >(null);
 
   const params = useMemo(() => {
     const p = new URLSearchParams({ mqtt });
@@ -46,7 +51,7 @@ function App() {
 
   const fetchAll = useCallback(async () => {
     const p = params.toString();
-    const [ov, nd, tp, pt, rs, sn, hp, qu] = await Promise.all([
+    const [ov, nd, tp, pt, rs, sn, hp, qu, tr] = await Promise.all([
       fetch(`/api/overview?${p}`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/nodes?${p}`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/throughput?${p}`).then((r) => (r.ok ? r.json() : null)),
@@ -57,6 +62,9 @@ function App() {
       fetch(`/api/snr?${p}`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/hops?${p}`).then((r) => (r.ok ? r.json() : null)),
       fetch("/api/queue").then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/traceroute-requesters?${p}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
     ]);
     setOverview(ov);
     setNodes(nd);
@@ -66,6 +74,7 @@ function App() {
     setSnr(sn);
     setHops(hp);
     setQueue(qu);
+    setTracerouteRequesters(tr);
   }, [params, packetFilter]);
 
   useEffect(() => {
@@ -120,6 +129,8 @@ function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <HopChart data={hops} />
         </div>
+
+        <TracerouteRequesterTable rows={tracerouteRequesters} />
 
         <NodeMap nodes={nodes} />
 

@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
 
+#[cfg(test)]
 use crate::util::parse_node_id;
 
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +69,16 @@ pub struct ThroughputBucket {
 pub struct DistributionBucket {
     pub label: String,
     pub count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TracerouteRequester {
+    pub node_id: String,
+    pub short_name: String,
+    pub long_name: String,
+    pub request_count: u64,
+    pub last_request: i64,
+    pub via_mqtt: bool,
 }
 
 pub struct Db {
@@ -227,6 +238,7 @@ impl Db {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn get_all_nodes(&self) -> Result<Vec<Node>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -373,6 +385,7 @@ impl Db {
         Ok(count as u64)
     }
 
+    #[cfg(test)]
     pub fn find_node_by_name(
         &self,
         name: &str,
@@ -915,6 +928,67 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?;
         Ok(nodes)
     }
+
+    pub fn dashboard_traceroute_requesters(
+        &self,
+        target_node: u32,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<TracerouteRequester>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
+
+        let mqtt_clause = match filter {
+            MqttFilter::All => "",
+            MqttFilter::LocalOnly => " AND p.via_mqtt = 0",
+            MqttFilter::MqttOnly => " AND p.via_mqtt = 1",
+        };
+
+        let query = format!(
+            "SELECT
+                p.from_node,
+                COALESCE(n.short_name, '') AS short_name,
+                COALESCE(n.long_name, '') AS long_name,
+                COUNT(*) AS request_count,
+                MAX(p.timestamp) AS last_request,
+                MAX(p.via_mqtt) AS via_mqtt
+             FROM packets p
+             LEFT JOIN nodes n ON n.node_id = p.from_node
+             WHERE p.direction = 'in'
+               AND p.packet_type = 'traceroute'
+               AND p.to_node = ?1
+               AND p.timestamp > ?2
+               {mqtt_clause}
+             GROUP BY p.from_node, n.short_name, n.long_name
+             ORDER BY last_request DESC"
+        );
+
+        let rows = conn
+            .prepare(&query)?
+            .query_map(params![target_node as i64, since], |row| {
+                let node_id_i64: i64 = row.get(0)?;
+                let short_name: String = row.get(1)?;
+                let long_name: String = row.get(2)?;
+                let request_count: i64 = row.get(3)?;
+                let last_request: i64 = row.get(4)?;
+                let via_mqtt: i64 = row.get(5)?;
+                Ok(TracerouteRequester {
+                    node_id: format!("!{:08x}", node_id_i64 as u32),
+                    short_name,
+                    long_name,
+                    request_count: request_count as u64,
+                    last_request,
+                    via_mqtt: via_mqtt != 0,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
@@ -1370,6 +1444,96 @@ mod tests {
             .dashboard_overview(24, MqttFilter::MqttOnly, "TestBot")
             .unwrap();
         assert_eq!(mqtt.messages_in, 1);
+    }
+
+    #[test]
+    fn test_dashboard_traceroute_requesters() {
+        let db = setup_db();
+        let me = 0x01020304;
+        let alice = 0xAAAAAAAA;
+        let bob = 0xBBBBBBBB;
+
+        db.upsert_node(alice, "ALC", "Alice", false).unwrap();
+        db.upsert_node(bob, "BOB", "Bob", true).unwrap();
+
+        db.log_packet(
+            alice,
+            Some(me),
+            0,
+            "",
+            "in",
+            false,
+            Some(-90),
+            Some(1.0),
+            Some(1),
+            Some(3),
+            "traceroute",
+        )
+        .unwrap();
+        db.log_packet(
+            alice,
+            Some(me),
+            0,
+            "",
+            "in",
+            false,
+            Some(-88),
+            Some(1.2),
+            Some(1),
+            Some(3),
+            "traceroute",
+        )
+        .unwrap();
+        db.log_packet(
+            bob,
+            Some(me),
+            0,
+            "",
+            "in",
+            true,
+            Some(-70),
+            Some(5.0),
+            Some(0),
+            Some(3),
+            "traceroute",
+        )
+        .unwrap();
+        db.log_packet(
+            bob,
+            Some(0x0A0B0C0D),
+            0,
+            "",
+            "in",
+            true,
+            Some(-70),
+            Some(5.0),
+            Some(0),
+            Some(3),
+            "traceroute",
+        )
+        .unwrap();
+
+        let all = db
+            .dashboard_traceroute_requesters(me, 24, MqttFilter::All)
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        let alice_row = all.iter().find(|r| r.node_id == "!aaaaaaaa").unwrap();
+        assert_eq!(alice_row.request_count, 2);
+        assert_eq!(alice_row.long_name, "Alice");
+        assert!(!alice_row.via_mqtt);
+
+        let local_only = db
+            .dashboard_traceroute_requesters(me, 24, MqttFilter::LocalOnly)
+            .unwrap();
+        assert_eq!(local_only.len(), 1);
+        assert_eq!(local_only[0].node_id, "!aaaaaaaa");
+
+        let mqtt_only = db
+            .dashboard_traceroute_requesters(me, 24, MqttFilter::MqttOnly)
+            .unwrap();
+        assert_eq!(mqtt_only.len(), 1);
+        assert_eq!(mqtt_only[0].node_id, "!bbbbbbbb");
     }
 
     #[test]

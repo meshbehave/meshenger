@@ -142,6 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             Arc::clone(&config),
             Arc::clone(&db),
             bot.queue_depth(),
+            bot.local_node_id(),
             sse_tx.clone(),
         );
         tokio::spawn(async move {

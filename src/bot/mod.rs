@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicU32, AtomicUsize};
 use std::sync::Arc;
 
 use crate::bridge::{MeshMessageSender, OutgoingMessageReceiver};
@@ -42,6 +42,8 @@ pub struct Bot {
     notifier: DashboardNotifier,
     /// Last traceroute probe send time per target node
     traceroute: TracerouteState,
+    /// Node ID of the connected local node (0 until MyInfo is received)
+    local_node_id: Arc<AtomicU32>,
 }
 
 impl Bot {
@@ -60,12 +62,18 @@ impl Bot {
             outgoing: OutgoingQueue::new(),
             notifier: DashboardNotifier::new(),
             traceroute: TracerouteState::new(),
+            local_node_id: Arc::new(AtomicU32::new(0)),
         }
     }
 
     /// Returns a shared handle to the queue depth counter (for the dashboard).
     pub fn queue_depth(&self) -> Arc<AtomicUsize> {
         self.outgoing.depth_handle()
+    }
+
+    /// Returns the currently connected local node ID handle (0 until connected).
+    pub fn local_node_id(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.local_node_id)
     }
 
     /// Set bridge channels for communication with external platforms.

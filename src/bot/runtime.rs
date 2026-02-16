@@ -5,6 +5,7 @@ use meshtastic::types::{MeshChannel, NodeId};
 use meshtastic::utils;
 use meshtastic::utils::stream::build_tcp_stream;
 use rand::Rng;
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::*;
@@ -74,6 +75,7 @@ impl Bot {
         log::info!("Connected and configured (config_id={})", config_id);
 
         let my_node_id = self.wait_for_my_node_id(&mut packet_rx).await?;
+        self.local_node_id.store(my_node_id, Ordering::Relaxed);
         log::info!("Bot node ID: !{:08x}", my_node_id);
 
         let mut router = BotPacketRouter {

@@ -30,6 +30,7 @@ struct AppState {
     db: Arc<Db>,
     config: Arc<Config>,
     queue_depth: Arc<AtomicUsize>,
+    local_node_id: Arc<std::sync::atomic::AtomicU32>,
     sse_tx: tokio::sync::broadcast::Sender<()>,
 }
 
@@ -68,6 +69,7 @@ pub struct Dashboard {
     config: Arc<Config>,
     db: Arc<Db>,
     queue_depth: Arc<AtomicUsize>,
+    local_node_id: Arc<std::sync::atomic::AtomicU32>,
     sse_tx: tokio::sync::broadcast::Sender<()>,
 }
 
@@ -76,12 +78,14 @@ impl Dashboard {
         config: Arc<Config>,
         db: Arc<Db>,
         queue_depth: Arc<AtomicUsize>,
+        local_node_id: Arc<std::sync::atomic::AtomicU32>,
         sse_tx: tokio::sync::broadcast::Sender<()>,
     ) -> Self {
         Self {
             config,
             db,
             queue_depth,
+            local_node_id,
             sse_tx,
         }
     }
@@ -94,6 +98,7 @@ impl Dashboard {
             db: self.db,
             config: self.config.clone(),
             queue_depth: self.queue_depth,
+            local_node_id: self.local_node_id,
             sse_tx: self.sse_tx,
         };
 
@@ -105,6 +110,10 @@ impl Dashboard {
             .route("/api/rssi", get(handle_rssi))
             .route("/api/snr", get(handle_snr))
             .route("/api/hops", get(handle_hops))
+            .route(
+                "/api/traceroute-requesters",
+                get(handle_traceroute_requesters),
+            )
             .route("/api/positions", get(handle_positions))
             .route("/api/queue", get(handle_queue))
             .route("/api/events", get(handle_sse));
@@ -238,6 +247,26 @@ async fn handle_positions(
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     to_json(positions)
+}
+
+async fn handle_traceroute_requesters(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let local_node_id = state.local_node_id.load(Ordering::Relaxed);
+    if local_node_id == 0 {
+        return to_json(Vec::<serde_json::Value>::new());
+    }
+
+    let filter = MqttFilter::from_str(&params.mqtt);
+    let rows = state
+        .db
+        .dashboard_traceroute_requesters(local_node_id, params.hours, filter)
+        .map_err(|e| {
+            log::error!("Dashboard traceroute requesters error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    to_json(rows)
 }
 
 async fn handle_queue(State(state): State<AppState>) -> Json<QueueResponse> {

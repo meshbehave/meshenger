@@ -37,6 +37,15 @@ export interface QueueDepth {
   depth: number;
 }
 
+export interface TracerouteRequester {
+  node_id: string;
+  short_name: string;
+  long_name: string;
+  request_count: number;
+  last_request: number;
+  via_mqtt: boolean;
+}
+
 export type MqttFilterValue = "all" | "local" | "mqtt_only";
 
 export type HoursValue = 24 | 72 | 168 | 720 | 2160 | 8760 | 0;
