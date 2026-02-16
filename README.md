@@ -124,12 +124,14 @@ Run `cd web && npm run build` once to build the frontend, then access the dashbo
 [traceroute_probe]
 enabled = false
 interval_secs = 900             # one probe cycle every 15 minutes
+interval_jitter_pct = 0.20      # adds 0..20% random delay per cycle
 recent_seen_within_secs = 3600  # only consider RF nodes seen in the last hour
 per_node_cooldown_secs = 21600  # don't probe the same node again for 6 hours
 mesh_channel = 0
 ```
 
 The probe targets the most recently seen local RF node that still has no inbound RF hop metadata. Probes are queued and sent via the same outgoing queue as normal bot messages, so send pacing remains centralized.
+`interval_jitter_pct` randomizes each cycle in `[interval_secs, interval_secs * (1 + jitter)]` to reduce synchronized, machine-like periodic traffic.
 
 ### Modules
 

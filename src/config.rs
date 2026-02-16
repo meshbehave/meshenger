@@ -44,6 +44,8 @@ pub struct TracerouteProbeConfig {
     pub enabled: bool,
     #[serde(default = "default_traceroute_interval_secs")]
     pub interval_secs: u64,
+    #[serde(default = "default_traceroute_interval_jitter_pct")]
+    pub interval_jitter_pct: f64,
     #[serde(default = "default_traceroute_recent_secs")]
     pub recent_seen_within_secs: u64,
     #[serde(default = "default_traceroute_cooldown_secs")]
@@ -57,6 +59,7 @@ impl Default for TracerouteProbeConfig {
         Self {
             enabled: false,
             interval_secs: default_traceroute_interval_secs(),
+            interval_jitter_pct: default_traceroute_interval_jitter_pct(),
             recent_seen_within_secs: default_traceroute_recent_secs(),
             per_node_cooldown_secs: default_traceroute_cooldown_secs(),
             mesh_channel: default_traceroute_channel(),
@@ -66,6 +69,10 @@ impl Default for TracerouteProbeConfig {
 
 fn default_traceroute_interval_secs() -> u64 {
     900
+}
+
+fn default_traceroute_interval_jitter_pct() -> f64 {
+    0.20
 }
 
 fn default_traceroute_recent_secs() -> u64 {

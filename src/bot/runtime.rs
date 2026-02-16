@@ -4,6 +4,7 @@ use meshtastic::protobufs::{self, from_radio};
 use meshtastic::types::{MeshChannel, NodeId};
 use meshtastic::utils;
 use meshtastic::utils::stream::build_tcp_stream;
+use rand::Rng;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::*;
@@ -116,9 +117,14 @@ impl Bot {
         let send_timer = tokio::time::sleep(send_delay);
         tokio::pin!(send_timer);
         let traceroute_enabled = self.config.traceroute_probe.enabled;
-        let traceroute_interval =
+        let traceroute_base_interval =
             std::time::Duration::from_secs(self.config.traceroute_probe.interval_secs.max(60));
-        let traceroute_timer = tokio::time::sleep(traceroute_interval);
+        let traceroute_jitter_pct =
+            sanitize_traceroute_jitter_pct(self.config.traceroute_probe.interval_jitter_pct);
+        let traceroute_timer = tokio::time::sleep(next_traceroute_interval(
+            traceroute_base_interval,
+            traceroute_jitter_pct,
+        ));
         tokio::pin!(traceroute_timer);
         let stale_node_max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60);
         let stale_node_purge_interval = std::time::Duration::from_secs(60 * 60);
@@ -182,7 +188,13 @@ impl Bot {
                     _ = &mut traceroute_timer, if traceroute_enabled => {
                         drop(rx_guard);
                         self.maybe_queue_traceroute_probe(my_node_id);
-                        traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
+                        traceroute_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + next_traceroute_interval(
+                                    traceroute_base_interval,
+                                    traceroute_jitter_pct,
+                                ),
+                        );
                     }
                     _ = &mut stale_node_purge_timer => {
                         drop(rx_guard);
@@ -220,7 +232,13 @@ impl Bot {
                     }
                     _ = &mut traceroute_timer, if traceroute_enabled => {
                         self.maybe_queue_traceroute_probe(my_node_id);
-                        traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
+                        traceroute_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + next_traceroute_interval(
+                                    traceroute_base_interval,
+                                    traceroute_jitter_pct,
+                                ),
+                        );
                     }
                     _ = &mut stale_node_purge_timer => {
                         self.purge_stale_nodes(stale_node_max_age);
@@ -252,6 +270,7 @@ impl Bot {
     fn maybe_queue_traceroute_probe(&self, my_node_id: u32) {
         let cfg = &self.config.traceroute_probe;
         if !cfg.enabled {
+            log::info!("Traceroute probe skipped: feature disabled");
             return;
         }
 
@@ -260,7 +279,13 @@ impl Bot {
             .recent_rf_node_missing_hops(cfg.recent_seen_within_secs, Some(my_node_id))
         {
             Ok(Some(node_id)) => node_id,
-            Ok(None) => return,
+            Ok(None) => {
+                log::info!(
+                    "Traceroute probe skipped: no eligible RF node missing hop data within last {}s",
+                    cfg.recent_seen_within_secs
+                );
+                return;
+            }
             Err(e) => {
                 log::error!("Traceroute probe candidate query failed: {}", e);
                 return;
@@ -268,6 +293,11 @@ impl Bot {
         };
 
         if !self.traceroute.can_send(target, cfg.per_node_cooldown_secs) {
+            log::info!(
+                "Traceroute probe skipped: !{:08x} is in cooldown ({}s)",
+                target,
+                cfg.per_node_cooldown_secs
+            );
             return;
         }
 
@@ -298,5 +328,52 @@ impl Bot {
 
         self.traceroute.mark_sent(target);
         log::info!("Queued traceroute probe for !{:08x}", target);
+    }
+}
+
+fn sanitize_traceroute_jitter_pct(jitter_pct: f64) -> f64 {
+    if !jitter_pct.is_finite() || jitter_pct <= 0.0 {
+        return 0.0;
+    }
+    jitter_pct.min(1.0)
+}
+
+fn next_traceroute_interval(base: std::time::Duration, jitter_pct: f64) -> std::time::Duration {
+    let jitter_pct = sanitize_traceroute_jitter_pct(jitter_pct);
+    if jitter_pct == 0.0 {
+        return base;
+    }
+
+    let jitter_secs = rand::thread_rng().gen_range(0.0..=(base.as_secs_f64() * jitter_pct));
+    std::time::Duration::from_secs_f64(base.as_secs_f64() + jitter_secs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_traceroute_jitter_pct_clamps_values() {
+        assert_eq!(sanitize_traceroute_jitter_pct(-0.1), 0.0);
+        assert_eq!(sanitize_traceroute_jitter_pct(0.0), 0.0);
+        assert_eq!(sanitize_traceroute_jitter_pct(0.2), 0.2);
+        assert_eq!(sanitize_traceroute_jitter_pct(2.0), 1.0);
+        assert_eq!(sanitize_traceroute_jitter_pct(f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn next_traceroute_interval_respects_bounds() {
+        let base = std::time::Duration::from_secs(60);
+        for _ in 0..256 {
+            let actual = next_traceroute_interval(base, 0.25);
+            assert!(actual >= base);
+            assert!(actual <= std::time::Duration::from_secs(75));
+        }
+    }
+
+    #[test]
+    fn next_traceroute_interval_zero_jitter_is_fixed() {
+        let base = std::time::Duration::from_secs(60);
+        assert_eq!(next_traceroute_interval(base, 0.0), base);
     }
 }
