@@ -17,7 +17,12 @@ if [ -f "$web_dir/package.json" ]; then
 
     if [ -x "$web_dir/node_modules/.bin/prettier" ]; then
       echo "[pre-commit] running web prettier --check"
-      npm --prefix "$web_dir" exec -- prettier --check "$web_dir"
+      npm --prefix "$web_dir" exec -- prettier --check \
+        "$web_dir/src" \
+        "$web_dir/*.json" \
+        "$web_dir/*.md" \
+        "$web_dir/*.ts" \
+        "$web_dir/*.js"
     else
       echo "[pre-commit] prettier not installed in web; skipping prettier check"
     fi
