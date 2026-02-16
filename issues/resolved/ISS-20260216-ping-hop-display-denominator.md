@@ -73,6 +73,7 @@ This makes the denominator stable as the packet's original hop budget and aligns
 
 ## References
 
+- Commit: `a3444af`
 - `src/modules/ping.rs`
 - `src/bot/incoming.rs`
 - `src/message.rs`
