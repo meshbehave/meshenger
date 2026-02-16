@@ -52,6 +52,7 @@ Previous implementation was scoped to `to_node = local_node_id` and aggregated o
 
 ## References
 
+- Commit: `bba63e6`
 - `src/db.rs`
 - `src/dashboard.rs`
 - `web/src/components/TracerouteTrafficPanel.tsx`
