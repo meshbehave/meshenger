@@ -195,6 +195,16 @@ See the existing modules for examples — `ping.rs` is the simplest starting poi
 - A Meshtastic node reachable via TCP (typically port 4403)
 - Internet access for `!weather` (uses [Open-Meteo](https://open-meteo.com/), free, no API key needed)
 
+## Issue Tracking
+
+Issues are tracked in-repo under `issues/` (filesystem-based).
+
+- Start with `issues/README.md`
+- Use `issues/templates/ISSUE_TEMPLATE.md`
+- Optional helper: `scripts/new-issue.sh --title "..."`
+- Keep `issues/index.md` updated when adding/changing issue status
+- Move issue files across status folders: `open`, `in_progress`, `resolved`, `rejected`
+
 ## License
 
 MIT

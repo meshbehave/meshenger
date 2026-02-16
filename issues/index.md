@@ -1,0 +1,6 @@
+# Issue Index
+
+| ID | Title | Status | Severity | Component | Reported | File |
+| --- | --- | --- | --- | --- | --- | --- |
+| ISS-20260216-ping-hop-display-denominator | Ping hop display used remaining hops as denominator | resolved | medium | module/ping | 2026-02-16 | `issues/resolved/ISS-20260216-ping-hop-display-denominator.md` |
+| ISS-20260216-script-smoke-test-issue | Script smoke test issue (template validation artifact) | rejected | medium | tooling/issues | 2026-02-16 | `issues/rejected/ISS-20260216-script-smoke-test-issue.md` |

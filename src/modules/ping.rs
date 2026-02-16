@@ -34,7 +34,7 @@ impl Module for PingModule {
         let mqtt_tag = if ctx.via_mqtt { " (via MQTT)" } else { "" };
         let text = format!(
             "Pong! RSSI: {} SNR: {:.1} Hops: {}/{}{}",
-            ctx.rssi, ctx.snr, ctx.hop_count, ctx.hop_limit, mqtt_tag
+            ctx.rssi, ctx.snr, ctx.hop_count, ctx.hop_start, mqtt_tag
         );
         Ok(Some(vec![Response {
             text,
@@ -54,7 +54,7 @@ mod tests {
         rssi: i32,
         snr: f32,
         hop_count: u32,
-        hop_limit: u32,
+        hop_start: u32,
         via_mqtt: bool,
     ) -> MessageContext {
         MessageContext {
@@ -65,7 +65,8 @@ mod tests {
             rssi,
             snr,
             hop_count,
-            hop_limit,
+            hop_start,
+            hop_limit: hop_start.saturating_sub(hop_count),
             via_mqtt,
             packet_id: 0,
         }

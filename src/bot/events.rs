@@ -60,6 +60,7 @@ impl Bot {
                         rssi: 0,
                         snr: 0.0,
                         hop_count: 0,
+                        hop_start: 0,
                         hop_limit: 0,
                         via_mqtt: false,
                         packet_id: 0,

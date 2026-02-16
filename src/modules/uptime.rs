@@ -77,6 +77,7 @@ mod tests {
             rssi: -70,
             snr: 5.0,
             hop_count: 1,
+            hop_start: 3,
             hop_limit: 3,
             via_mqtt: false,
             packet_id: 0,

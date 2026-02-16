@@ -105,6 +105,7 @@ fn test_ctx(sender_id: u32, channel: u32) -> MessageContext {
         rssi: 0,
         snr: 0.0,
         hop_count: 0,
+        hop_start: 0,
         hop_limit: 0,
         via_mqtt: false,
         packet_id: 0,

@@ -208,6 +208,7 @@ impl Bot {
             rssi: mesh_packet.rx_rssi,
             snr: mesh_packet.rx_snr,
             hop_count: hops,
+            hop_start: mesh_packet.hop_start,
             hop_limit: mesh_packet.hop_limit,
             via_mqtt: mesh_packet.via_mqtt,
             packet_id: mesh_packet.id,

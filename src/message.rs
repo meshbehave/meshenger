@@ -35,6 +35,7 @@ pub struct MessageContext {
     pub rssi: i32,
     pub snr: f32,
     pub hop_count: u32,
+    pub hop_start: u32,
     pub hop_limit: u32,
     pub via_mqtt: bool,
     /// The incoming mesh packet's unique ID (used for reply threading)
