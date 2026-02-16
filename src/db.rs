@@ -326,6 +326,18 @@ impl Db {
         Ok(())
     }
 
+    pub fn purge_nodes_not_seen_within(
+        &self,
+        max_age_secs: u64,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let max_age_secs = i64::try_from(max_age_secs)
+            .map_err(|_| "max_age_secs too large for timestamp arithmetic")?;
+        let cutoff = Utc::now().timestamp() - max_age_secs;
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute("DELETE FROM nodes WHERE last_seen < ?1", params![cutoff])?;
+        Ok(deleted)
+    }
+
     pub fn get_node_position(
         &self,
         node_id: u32,
@@ -973,6 +985,37 @@ mod tests {
         let db = setup_db();
         let name = db.get_node_name(0x99999999).unwrap();
         assert_eq!(name, "!99999999");
+    }
+
+    #[test]
+    fn test_purge_nodes_not_seen_within() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+
+        let now = Utc::now().timestamp();
+        let stale_ts = now - (8 * 24 * 3600);
+        let recent_ts = now - (2 * 24 * 3600);
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE nodes SET last_seen = ?1 WHERE node_id = ?2",
+                params![stale_ts, 0xAAAAAAAAu32 as i64],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE nodes SET last_seen = ?1 WHERE node_id = ?2",
+                params![recent_ts, 0xBBBBBBBBu32 as i64],
+            )
+            .unwrap();
+        }
+
+        let purged = db.purge_nodes_not_seen_within(7 * 24 * 3600).unwrap();
+        assert_eq!(purged, 1);
+
+        let nodes = db.get_all_nodes().unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, 0xBBBBBBBB);
     }
 
     #[test]

@@ -120,6 +120,12 @@ impl Bot {
             std::time::Duration::from_secs(self.config.traceroute_probe.interval_secs.max(60));
         let traceroute_timer = tokio::time::sleep(traceroute_interval);
         tokio::pin!(traceroute_timer);
+        let stale_node_max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+        let stale_node_purge_interval = std::time::Duration::from_secs(60 * 60);
+        let stale_node_purge_timer = tokio::time::sleep(stale_node_purge_interval);
+        tokio::pin!(stale_node_purge_timer);
+
+        self.purge_stale_nodes(stale_node_max_age);
 
         // Track bridge receiver availability; disable bridge polling once channel closes.
         let mut bridge_rx = self.bridge.rx();
@@ -178,6 +184,11 @@ impl Bot {
                         self.maybe_queue_traceroute_probe(my_node_id);
                         traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
                     }
+                    _ = &mut stale_node_purge_timer => {
+                        drop(rx_guard);
+                        self.purge_stale_nodes(stale_node_max_age);
+                        stale_node_purge_timer.as_mut().reset(tokio::time::Instant::now() + stale_node_purge_interval);
+                    }
                 }
                 if disable_bridge {
                     bridge_rx = None;
@@ -211,7 +222,29 @@ impl Bot {
                         self.maybe_queue_traceroute_probe(my_node_id);
                         traceroute_timer.as_mut().reset(tokio::time::Instant::now() + traceroute_interval);
                     }
+                    _ = &mut stale_node_purge_timer => {
+                        self.purge_stale_nodes(stale_node_max_age);
+                        stale_node_purge_timer.as_mut().reset(tokio::time::Instant::now() + stale_node_purge_interval);
+                    }
                 }
+            }
+        }
+    }
+
+    fn purge_stale_nodes(&self, max_age: std::time::Duration) {
+        match self.db.purge_nodes_not_seen_within(max_age.as_secs()) {
+            Ok(purged) if purged > 0 => {
+                let days = max_age.as_secs() / (24 * 60 * 60);
+                log::info!(
+                    "Purged {} stale node(s) not seen in over {} day(s)",
+                    purged,
+                    days
+                );
+                self.notify_dashboard();
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log::error!("Failed to purge stale nodes: {}", e);
             }
         }
     }
