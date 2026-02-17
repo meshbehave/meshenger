@@ -560,10 +560,22 @@ impl Db {
         max_age_secs: u64,
         exclude_node_id: Option<u32>,
     ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+        let candidates =
+            self.recent_rf_nodes_missing_hops(max_age_secs, exclude_node_id, 1usize)?;
+        Ok(candidates.into_iter().next())
+    }
+
+    /// Return up to `limit` most recently seen RF nodes missing inbound RF hop metadata.
+    pub fn recent_rf_nodes_missing_hops(
+        &self,
+        max_age_secs: u64,
+        exclude_node_id: Option<u32>,
+        limit: usize,
+    ) -> Result<Vec<u32>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.conn.lock().unwrap();
         let since = Utc::now().timestamp() - (max_age_secs as i64);
         let exclude = exclude_node_id.unwrap_or(0) as i64;
-        let result: Result<i64, _> = conn.query_row(
+        let mut stmt = conn.prepare(
             "SELECT n.node_id
              FROM nodes n
              WHERE n.via_mqtt = 0
@@ -578,16 +590,14 @@ impl Db {
                      AND p.hop_count IS NOT NULL
                )
              ORDER BY n.last_seen DESC
-             LIMIT 1",
-            params![since, exclude],
-            |row| row.get(0),
-        );
-
-        match result {
-            Ok(id) => Ok(Some(id as u32)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
+             LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![since, exclude, limit as i64], |row| {
+                row.get::<_, i64>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows.into_iter().map(|id| id as u32).collect())
     }
 
     // --- Packet logging ---
@@ -1974,6 +1984,37 @@ mod tests {
             .recent_rf_node_missing_hops(3600, Some(0xAAAAAAAA))
             .unwrap();
         assert_eq!(candidate, Some(0xBBBBBBBB));
+    }
+
+    #[test]
+    fn test_recent_rf_nodes_missing_hops_returns_multiple_in_recency_order() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "A", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
+        db.upsert_node(0xCCCCCCCC, "C", "Carol", false).unwrap();
+
+        let now = Utc::now().timestamp();
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "UPDATE nodes SET last_seen = ?1 WHERE node_id = ?2",
+                params![now - 30, 0xAAAAAAAAu32 as i64],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE nodes SET last_seen = ?1 WHERE node_id = ?2",
+                params![now - 10, 0xBBBBBBBBu32 as i64],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE nodes SET last_seen = ?1 WHERE node_id = ?2",
+                params![now - 20, 0xCCCCCCCCu32 as i64],
+            )
+            .unwrap();
+        }
+
+        let candidates = db.recent_rf_nodes_missing_hops(3600, None, 2).unwrap();
+        assert_eq!(candidates, vec![0xBBBBBBBB, 0xCCCCCCCC]);
     }
 
     // --- Position tests ---

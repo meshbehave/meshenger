@@ -5,6 +5,7 @@ use meshtastic::types::{MeshChannel, NodeId};
 use meshtastic::utils;
 use meshtastic::utils::stream::build_tcp_stream;
 use rand::Rng;
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -40,6 +41,64 @@ impl PacketRouter<(), RouterError> for BotPacketRouter {
     fn source_node_id(&self) -> NodeId {
         NodeId::from(self.node_id)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProbeSelection {
+    target: Option<u32>,
+    cooldown_skipped: usize,
+    queried_limits: usize,
+    had_candidates: bool,
+}
+
+fn select_probe_target_adaptive<F, E, G>(
+    limits: &[usize],
+    mut fetch_candidates: F,
+    mut can_send: G,
+) -> Result<ProbeSelection, E>
+where
+    F: FnMut(usize) -> Result<Vec<u32>, E>,
+    G: FnMut(u32) -> bool,
+{
+    let mut seen = HashSet::new();
+    let mut cooldown_skipped = 0usize;
+    let mut queried_limits = 0usize;
+    let mut had_candidates = false;
+
+    for &limit in limits {
+        let candidates = fetch_candidates(limit)?;
+        queried_limits += 1;
+        if candidates.is_empty() {
+            break;
+        }
+        had_candidates = true;
+
+        for node_id in candidates.iter().copied() {
+            if !seen.insert(node_id) {
+                continue;
+            }
+            if can_send(node_id) {
+                return Ok(ProbeSelection {
+                    target: Some(node_id),
+                    cooldown_skipped,
+                    queried_limits,
+                    had_candidates,
+                });
+            }
+            cooldown_skipped += 1;
+        }
+
+        if candidates.len() < limit {
+            break;
+        }
+    }
+
+    Ok(ProbeSelection {
+        target: None,
+        cooldown_skipped,
+        queried_limits,
+        had_candidates,
+    })
 }
 
 impl Bot {
@@ -276,31 +335,64 @@ impl Bot {
             return;
         }
 
-        let target = match self
-            .db
-            .recent_rf_node_missing_hops(cfg.recent_seen_within_secs, Some(my_node_id))
-        {
-            Ok(Some(node_id)) => node_id,
-            Ok(None) => {
-                log::info!(
-                    "Traceroute probe skipped: no eligible RF node missing hop data within last {}s",
-                    cfg.recent_seen_within_secs
-                );
-                return;
-            }
+        let limits = [10usize, 25, 50, 100];
+        let selection = match select_probe_target_adaptive(
+            &limits,
+            |limit| {
+                self.db.recent_rf_nodes_missing_hops(
+                    cfg.recent_seen_within_secs,
+                    Some(my_node_id),
+                    limit,
+                )
+            },
+            |node_id| {
+                let can_send = self
+                    .traceroute
+                    .can_send(node_id, cfg.per_node_cooldown_secs);
+                if !can_send {
+                    log::trace!(
+                        "Traceroute probe candidate !{:08x} skipped due to cooldown ({}s)",
+                        node_id,
+                        cfg.per_node_cooldown_secs
+                    );
+                }
+                can_send
+            },
+        ) {
+            Ok(sel) => sel,
             Err(e) => {
                 log::error!("Traceroute probe candidate query failed: {}", e);
                 return;
             }
         };
 
-        if !self.traceroute.can_send(target, cfg.per_node_cooldown_secs) {
+        if !selection.had_candidates {
             log::info!(
-                "Traceroute probe skipped: !{:08x} is in cooldown ({}s)",
-                target,
-                cfg.per_node_cooldown_secs
+                "Traceroute probe skipped: no eligible RF node missing hop data within last {}s",
+                cfg.recent_seen_within_secs
             );
             return;
+        }
+
+        let target = match selection.target {
+            Some(node_id) => node_id,
+            None => {
+                log::info!(
+                    "Traceroute probe skipped: all eligible candidates are in cooldown (checked={}, windows={})",
+                    selection.cooldown_skipped,
+                    selection.queried_limits
+                );
+                return;
+            }
+        };
+
+        if selection.cooldown_skipped > 0 {
+            log::info!(
+                "Traceroute probe selected fallback candidate !{:08x} after skipping {} cooling-down node(s) across {} window(s)",
+                target,
+                selection.cooldown_skipped,
+                selection.queried_limits
+            );
         }
 
         let channel = match MeshChannel::new(cfg.mesh_channel) {
@@ -353,6 +445,7 @@ fn next_traceroute_interval(base: std::time::Duration, jitter_pct: f64) -> std::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn sanitize_traceroute_jitter_pct_clamps_values() {
@@ -377,5 +470,60 @@ mod tests {
     fn next_traceroute_interval_zero_jitter_is_fixed() {
         let base = std::time::Duration::from_secs(60);
         assert_eq!(next_traceroute_interval(base, 0.0), base);
+    }
+
+    #[test]
+    fn select_probe_target_adaptive_expands_and_finds_candidate() {
+        let limits = [10usize, 25, 50, 100];
+        let mut windows = HashMap::new();
+        windows.insert(10usize, (1u32..=10).collect::<Vec<_>>());
+        windows.insert(25usize, (1u32..=25).collect::<Vec<_>>());
+        let selection = select_probe_target_adaptive(
+            &limits,
+            |limit| Ok::<Vec<u32>, &'static str>(windows.get(&limit).cloned().unwrap_or_default()),
+            |node_id| node_id == 21,
+        )
+        .unwrap();
+
+        assert_eq!(selection.target, Some(21));
+        assert_eq!(selection.cooldown_skipped, 20);
+        assert_eq!(selection.queried_limits, 2);
+        assert!(selection.had_candidates);
+    }
+
+    #[test]
+    fn select_probe_target_adaptive_all_cooldown() {
+        let limits = [10usize, 25, 50, 100];
+        let mut windows = HashMap::new();
+        windows.insert(10usize, (1u32..=10).collect::<Vec<_>>());
+        windows.insert(25usize, (1u32..=25).collect::<Vec<_>>());
+        windows.insert(50usize, (1u32..=30).collect::<Vec<_>>());
+        let selection = select_probe_target_adaptive(
+            &limits,
+            |limit| Ok::<Vec<u32>, &'static str>(windows.get(&limit).cloned().unwrap_or_default()),
+            |_node_id| false,
+        )
+        .unwrap();
+
+        assert_eq!(selection.target, None);
+        assert_eq!(selection.cooldown_skipped, 30);
+        assert_eq!(selection.queried_limits, 3);
+        assert!(selection.had_candidates);
+    }
+
+    #[test]
+    fn select_probe_target_adaptive_no_candidates() {
+        let limits = [10usize, 25, 50, 100];
+        let selection = select_probe_target_adaptive(
+            &limits,
+            |_limit| Ok::<Vec<u32>, &'static str>(Vec::new()),
+            |_node_id| true,
+        )
+        .unwrap();
+
+        assert_eq!(selection.target, None);
+        assert_eq!(selection.cooldown_skipped, 0);
+        assert_eq!(selection.queried_limits, 1);
+        assert!(!selection.had_candidates);
     }
 }
