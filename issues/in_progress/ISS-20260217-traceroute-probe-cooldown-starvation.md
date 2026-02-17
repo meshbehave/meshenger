@@ -51,6 +51,7 @@ Current logic chooses a single candidate (`ORDER BY last_seen DESC LIMIT 1`). If
 - `src/bot/runtime.rs`
 - `src/db.rs`
 - Log evidence: `Traceroute probe skipped: !04059698 is in cooldown (21600s)`
+- Commit: `4ca0858`
 
 ## Timeline
 
@@ -59,3 +60,4 @@ Current logic chooses a single candidate (`ORDER BY last_seen DESC LIMIT 1`). If
 - 2026-02-17 18:49 - Added DB test coverage for multi-candidate missing-hop selection order and limit.
 - 2026-02-17 18:57 - Upgraded probe selection to adaptive windows (`10/25/50/100`) to avoid top-window starvation.
 - 2026-02-17 18:58 - Added runtime unit tests for adaptive selection behavior (expansion, all-cooldown, empty-candidate paths).
+- 2026-02-17 19:49 - Cherry-picked to `main` and recorded main commit hash.
