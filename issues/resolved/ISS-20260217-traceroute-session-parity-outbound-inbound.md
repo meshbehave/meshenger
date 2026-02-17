@@ -107,6 +107,7 @@ Final scoped behavior (resolved):
 - Parent requirement (resolved): `issues/resolved/ISS-20260217-traceroute-hops-to-me-path-visualization.md`
 - Related log script: `scripts/run-meshenger-live-test.sh`
 - Live test evidence log: `/tmp/meshenger-live-test-20260217-195129.log`
+- Commit: `9ba3824`
 
 ## Timeline
 
