@@ -9,9 +9,9 @@ mod module;
 mod modules;
 mod util;
 
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::io::Write;
 
 use bridge::create_bridge_channels;
 use bridges::discord::BridgeDirection as DiscordDirection;

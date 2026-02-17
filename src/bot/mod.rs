@@ -47,6 +47,17 @@ pub struct Bot {
 }
 
 impl Bot {
+    pub(super) fn traceroute_session_key(
+        src_node: u32,
+        dst_node: Option<u32>,
+        request_mesh_id: u32,
+    ) -> String {
+        let dst = dst_node
+            .map(|n| format!("{:08x}", n))
+            .unwrap_or_else(|| "broadcast".to_string());
+        format!("req:{:08x}:{}:{:08x}", src_node, dst, request_mesh_id)
+    }
+
     pub fn new(config: Arc<Config>, db: Arc<Db>, registry: ModuleRegistry) -> Self {
         let rate_limiter = RateLimiter::new(
             config.bot.rate_limit_commands,

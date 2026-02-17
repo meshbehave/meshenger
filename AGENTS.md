@@ -112,7 +112,11 @@ Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket 
 
 **Real-time updates**: The bot sends notifications via a `tokio::sync::broadcast` channel whenever packets arrive or messages are sent. The dashboard exposes this as an SSE endpoint (`/api/events`). The frontend connects via `EventSource` and re-fetches data on each `refresh` event. Polling every 30s remains as a fallback.
 
-**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, traceroute traffic panel with 2 tabs (`Events` + `Destinations`), node map (Leaflet with MQTT/RF marker distinction + per-node hop summary), sortable node table (with MQTT/RF badges + per-node hop summary), MQTT filter toggle.
+**Frontend** (`web/`): React + TypeScript + Vite + Tailwind CSS v4 + Chart.js + Leaflet. Dark theme. Real-time updates via SSE with 30s polling fallback. Components: overview cards (6 — nodes, messages in/out, packets in/out, queue depth), time range selector (1d/3d/7d/30d/90d/365d/All), message throughput chart (text only), packet throughput chart (with type toggles), RSSI/SNR bar charts, hop count doughnut, traceroute traffic panel with 2 tabs (`Events` + `Destinations`), node map (Leaflet with MQTT/RF marker distinction + per-node hop summary), sortable node table (with MQTT/RF badges + per-node hop summary), MQTT filter toggle. Traceroute session detail displays `Route` plus optional `Route Back`; when no decoded hops are available it explicitly shows `Path unavailable on this node`.
+
+Traceroute Insights `Sessions` table semantics:
+- `Request` / `Response` columns display `hop_count/hop_start` when present.
+- `Samples` is the count of packet observations merged into the same traceroute session key.
 
 **Dev workflow**: Run `cd web && npm run dev` (Vite at :5173 with proxy to :9000) alongside `cargo run`. **Prod workflow**: `cd web && npm run build` then `cargo run` — axum serves both API and SPA from port 9000.
 
@@ -121,6 +125,10 @@ Smart bucketing: queries with `hours <= 48` bucket by hour; `hours > 48` bucket 
 SQLite via `rusqlite` with bundled SQLite. Core runtime tables are `nodes` and `packets`. All access goes through the `Db` struct in `db.rs`. Use in-memory SQLite (`:memory:`) for tests.
 
 The `packets` table includes a `packet_type` column (`text`, `position`, `telemetry`, `nodeinfo`, `traceroute`, `neighborinfo`, `routing`, `other`) and RF metadata columns (`via_mqtt`, `rssi`, `snr`, `hop_count`, `hop_start`). All packet types from the Meshtastic node are logged, not just text messages. `log_packet()` accepts these fields — outgoing messages pass `"text"`/`false`/`None`.
+
+Traceroute session correlation is request-ID based (Meshtastic protocol semantics): canonical session key format is `req:<src>:<dst>:<request_id>`, where `request_id` is the traceroute request packet ID (`MeshPacket.id`) and responses/routing updates attach via `Data.request_id`.
+
+When available, traceroute path vectors are extracted from both `TracerouteApp` and `RoutingApp` payloads (`RouteRequest`/`RouteReply`) and persisted to `traceroute_session_hops`. The `source_kind` field indicates provenance (`route`, `route_back`, `routing_route`, `routing_route_back`).
 
 The `nodes` table includes a `via_mqtt` column tracking whether a node was last seen via MQTT or local RF. This is populated from the `NodeInfo` protobuf's `via_mqtt` field and carried through `MeshEvent::NodeDiscovered` (including deferred events during the startup grace period).
 

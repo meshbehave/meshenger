@@ -85,6 +85,7 @@ Dashboard should provide:
 
 - `issues/resolved/ISS-20260216-dashboard-traceroute-requesters.md`
 - `issues/resolved/ISS-20260216-dashboard-traceroute-traffic-tabs.md`
+- Follow-up parity issue: `issues/in_progress/ISS-20260217-traceroute-session-parity-outbound-inbound.md`
 - Commit: `5cb872f`
 
 ## Timeline
@@ -93,3 +94,4 @@ Dashboard should provide:
 - 2026-02-17 12:08 - Implemented backend schema/API and frontend traceroute insights panel.
 - 2026-02-17 12:09 - Validation completed (`cargo test -q`, `cd web && npm run -s build`).
 - 2026-02-17 12:10 - Issue moved to resolved with fix commit reference.
+- 2026-02-17 20:09 - Follow-up opened for outbound/inbound session parity correlation and hop parity completion.

@@ -1371,10 +1371,28 @@ impl Db {
         response_hop_start: Option<u32>,
         request_route: &[u32],
         response_route: &[u32],
+        request_source_kind: &str,
+        response_source_kind: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let now = Utc::now().timestamp();
+        log::trace!(
+            "log_traceroute_observation start trace_key={} packet_row_id={} src=!{:08x} dst={} req_hops={:?}/{:?} res_hops={:?}/{:?} req_route_len={} res_route_len={}",
+            trace_key,
+            packet_row_id,
+            src_node,
+            dst_node
+                .map(|n| format!("!{:08x}", n))
+                .unwrap_or_else(|| "broadcast".to_string()),
+            request_hops,
+            request_hop_start,
+            response_hops,
+            response_hop_start,
+            request_route.len(),
+            response_route.len()
+        );
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        let mut created_session = false;
 
         let session_id = {
             let mut find_stmt = tx.prepare(
@@ -1450,6 +1468,7 @@ impl Db {
                     id
                 }
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    created_session = true;
                     let status = Self::traceroute_status(
                         request_hops,
                         response_hops,
@@ -1492,19 +1511,41 @@ impl Db {
         for (idx, node) in request_route.iter().enumerate() {
             tx.execute(
                 "INSERT INTO traceroute_session_hops (session_id, direction, hop_index, node_id, observed_at, packet_id_ref, source_kind)
-                 VALUES (?1, 'request', ?2, ?3, ?4, ?5, 'route')",
-                params![session_id, idx as i64, *node as i64, now, packet_row_id],
+                 VALUES (?1, 'request', ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    session_id,
+                    idx as i64,
+                    *node as i64,
+                    now,
+                    packet_row_id,
+                    request_source_kind
+                ],
             )?;
         }
         for (idx, node) in response_route.iter().enumerate() {
             tx.execute(
                 "INSERT INTO traceroute_session_hops (session_id, direction, hop_index, node_id, observed_at, packet_id_ref, source_kind)
-                 VALUES (?1, 'response', ?2, ?3, ?4, ?5, 'route_back')",
-                params![session_id, idx as i64, *node as i64, now, packet_row_id],
+                 VALUES (?1, 'response', ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    session_id,
+                    idx as i64,
+                    *node as i64,
+                    now,
+                    packet_row_id,
+                    response_source_kind
+                ],
             )?;
         }
 
         tx.commit()?;
+        log::trace!(
+            "log_traceroute_observation committed trace_key={} session_id={} mode={} inserted_req_hops={} inserted_res_hops={}",
+            trace_key,
+            session_id,
+            if created_session { "created" } else { "updated" },
+            request_route.len(),
+            response_route.len()
+        );
         Ok(())
     }
 
@@ -1670,6 +1711,41 @@ impl Db {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    pub fn find_traceroute_session_by_request_mesh_id(
+        &self,
+        request_mesh_packet_id: u32,
+        max_age_secs: u64,
+    ) -> Result<Option<(String, u32, Option<u32>)>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let since = Utc::now().timestamp() - max_age_secs as i64;
+        let request_hex = format!("{:08x}", request_mesh_packet_id);
+        let trace_like = format!("req:%:{}", request_hex);
+        let result = conn.query_row(
+            "SELECT s.trace_key, s.src_node, s.dst_node
+             FROM traceroute_sessions s
+             LEFT JOIN packets p ON p.id = s.request_packet_id
+             WHERE (p.mesh_packet_id = ?1 OR s.trace_key LIKE ?2)
+               AND s.last_seen >= ?3
+             ORDER BY
+               CASE WHEN p.mesh_packet_id = ?1 THEN 0 ELSE 1 END,
+               s.last_seen DESC,
+               s.id DESC
+             LIMIT 1",
+            params![request_mesh_packet_id as i64, trace_like, since],
+            |row| {
+                let src: i64 = row.get(1)?;
+                let dst: Option<i64> = row.get(2)?;
+                Ok((row.get::<_, String>(0)?, src as u32, dst.map(|v| v as u32)))
+            },
+        );
+
+        match result {
+            Ok(row) => Ok(Some(row)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn dashboard_traceroute_session_detail(
@@ -2559,6 +2635,8 @@ mod tests {
             Some(7),
             &[0xAAAAAAAA, 0xCCCCCCCC, 0xBBBBBBBB],
             &[0xBBBBBBBB, 0xCCCCCCCC, 0xAAAAAAAA],
+            "route",
+            "route_back",
         )
         .unwrap();
 
@@ -2579,6 +2657,108 @@ mod tests {
         assert_eq!(detail.hops.len(), 6);
         assert_eq!(detail.hops[0].direction, "request");
         assert_eq!(detail.hops[0].node_id, "!aaaaaaaa");
+        assert_eq!(detail.hops[0].source_kind, "route");
+        assert_eq!(detail.hops[3].source_kind, "route_back");
+    }
+
+    #[test]
+    fn test_traceroute_hop_source_kinds_for_routing_paths() {
+        let db = setup_db();
+        let packet_id = db
+            .log_packet_with_mesh_id(
+                0x699c7dcc,
+                Some(0x49432517),
+                0,
+                "",
+                "in",
+                false,
+                Some(-25),
+                Some(10.5),
+                Some(1),
+                Some(5),
+                Some(0x12345678),
+                "routing",
+            )
+            .unwrap();
+
+        db.log_traceroute_observation(
+            packet_id,
+            "req:699c7dcc:49432517:12345678",
+            0x699c7dcc,
+            Some(0x49432517),
+            false,
+            Some(1),
+            Some(5),
+            Some(1),
+            Some(5),
+            &[0x699c7dcc, 0x49432517],
+            &[0x49432517, 0x699c7dcc],
+            "routing_route",
+            "routing_route_back",
+        )
+        .unwrap();
+
+        let sessions = db
+            .dashboard_traceroute_sessions(24, MqttFilter::All, 10)
+            .unwrap();
+        let session = sessions
+            .iter()
+            .find(|s| s.trace_key == "req:699c7dcc:49432517:12345678")
+            .expect("session exists");
+        assert_eq!(session.status, "complete");
+
+        let detail = db
+            .dashboard_traceroute_session_detail(session.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.hops.len(), 4);
+        assert_eq!(detail.hops[0].source_kind, "routing_route");
+        assert_eq!(detail.hops[2].source_kind, "routing_route_back");
+    }
+
+    #[test]
+    fn test_find_traceroute_session_by_request_mesh_id() {
+        let db = setup_db();
+        let packet_id = db
+            .log_packet_with_mesh_id(
+                0x699c7dcc,
+                Some(0x0409fb08),
+                0,
+                "",
+                "out",
+                false,
+                None,
+                None,
+                None,
+                None,
+                Some(0x613af26b),
+                "traceroute",
+            )
+            .unwrap();
+        db.log_traceroute_observation(
+            packet_id,
+            "req:699c7dcc:0409fb08:613af26b",
+            0x699c7dcc,
+            Some(0x0409fb08),
+            false,
+            None,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            "route",
+            "route_back",
+        )
+        .unwrap();
+
+        let found = db
+            .find_traceroute_session_by_request_mesh_id(0x613af26b, 3600)
+            .unwrap();
+        let (trace_key, src, dst) = found.expect("session should exist");
+        assert_eq!(trace_key, "req:699c7dcc:0409fb08:613af26b");
+        assert_eq!(src, 0x699c7dcc);
+        assert_eq!(dst, Some(0x0409fb08));
     }
 
     #[test]

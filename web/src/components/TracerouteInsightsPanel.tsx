@@ -41,9 +41,23 @@ function statusClass(status: string): string {
 
 function renderHopTimeline(hops: TracerouteSessionHopRow[]): string {
   if (hops.length === 0) {
-    return "No path hops decoded";
+    return "Path unavailable on this node";
   }
   return hops.map((h) => h.node_id).join(" -> ");
+}
+
+function latestPathForDirection(
+  hops: TracerouteSessionHopRow[],
+  direction: "request" | "response",
+): TracerouteSessionHopRow[] {
+  const selected = hops.filter((h) => h.direction === direction);
+  if (selected.length === 0) {
+    return [];
+  }
+  const latestObservedAt = Math.max(...selected.map((h) => h.observed_at));
+  return selected
+    .filter((h) => h.observed_at === latestObservedAt)
+    .sort((a, b) => a.hop_index - b.hop_index);
 }
 
 export function TracerouteInsightsPanel({
@@ -190,27 +204,60 @@ export function TracerouteInsightsPanel({
               ))}
             </tbody>
           </table>
+          <div className="text-[11px] text-slate-500 leading-5">
+            Columns: <span className="text-slate-400">Status</span> shows
+            session completeness (`observed`/`partial`/`complete`);
+            <span className="text-slate-400"> Request</span> and
+            <span className="text-slate-400"> Response</span> are request-side /
+            response-side `hop_count/hop_start` seen by this node when
+            available; <span className="text-slate-400">Samples</span> is how
+            many packet observations were merged into the same traceroute
+            session. Same session key ={" "}
+            <span className="text-slate-400">
+              req:&lt;src&gt;:&lt;dst&gt;:&lt;request_id&gt;
+            </span>
+            .
+          </div>
 
           {selectedSession ? (
             <div className="rounded-md border border-slate-700 bg-slate-900/40 p-3 space-y-2">
-              <div className="text-sm text-slate-300">
-                Selected Session #{selectedSession.session.id} (
-                {selectedSession.session.trace_key})
-              </div>
-              <div className="text-xs text-slate-400">
-                Request path:{" "}
-                {renderHopTimeline(
-                  selectedSession.hops.filter((h) => h.direction === "request"),
-                )}
-              </div>
-              <div className="text-xs text-slate-400">
-                Response path:{" "}
-                {renderHopTimeline(
-                  selectedSession.hops.filter(
-                    (h) => h.direction === "response",
-                  ),
-                )}
-              </div>
+              {(() => {
+                const requestPath = latestPathForDirection(
+                  selectedSession.hops,
+                  "request",
+                );
+                const responsePath = latestPathForDirection(
+                  selectedSession.hops,
+                  "response",
+                );
+                const hasRoute = requestPath.length > 0;
+                const hasRouteBack = responsePath.length > 0;
+                return (
+                  <>
+                    <div className="text-sm text-slate-300">
+                      Selected Session #{selectedSession.session.id} (
+                      {selectedSession.session.trace_key})
+                    </div>
+                    {hasRoute ? (
+                      <div className="text-xs text-slate-300">
+                        Route: {renderHopTimeline(requestPath)}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-500">
+                        {selectedSession.session.request_hops === 0 ||
+                        selectedSession.session.response_hops === 0
+                          ? "Direct RF link observed (0 hops). Route vector was not provided by this node."
+                          : "Path unavailable on this node."}
+                      </div>
+                    )}
+                    {hasRouteBack ? (
+                      <div className="text-xs text-slate-400">
+                        Route Back: {renderHopTimeline(responsePath)}
+                      </div>
+                    ) : null}
+                  </>
+                );
+              })()}
             </div>
           ) : (
             <div className="text-xs text-slate-500">

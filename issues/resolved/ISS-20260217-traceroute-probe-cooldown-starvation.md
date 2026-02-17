@@ -1,7 +1,7 @@
 # ID: ISS-20260217-traceroute-probe-cooldown-starvation
 
 Title: Auto traceroute probe can starve other candidates when top candidate is in cooldown
-Status: in_progress
+Status: resolved
 Reported: 2026-02-17
 Reporter: user
 Severity: medium
@@ -61,3 +61,4 @@ Current logic chooses a single candidate (`ORDER BY last_seen DESC LIMIT 1`). If
 - 2026-02-17 18:57 - Upgraded probe selection to adaptive windows (`10/25/50/100`) to avoid top-window starvation.
 - 2026-02-17 18:58 - Added runtime unit tests for adaptive selection behavior (expansion, all-cooldown, empty-candidate paths).
 - 2026-02-17 19:49 - Cherry-picked to `main` and recorded main commit hash.
+- 2026-02-17 20:40 - Issue marked resolved after confirming fix commit exists on `main` (`4ca0858`).

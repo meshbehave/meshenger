@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use meshtastic::packet::PacketDestination;
 use meshtastic::protobufs;
 use meshtastic::types::{MeshChannel, NodeId};
+use meshtastic::utils;
 use meshtastic::Message;
 
 use crate::message::{Destination, MessageContext, Response};
@@ -191,7 +192,8 @@ impl Bot {
             }
             OutgoingKind::Traceroute { target_node } => {
                 log::info!("Sending queued traceroute probe to !{:08x}", target_node);
-                let _ = self.db.log_packet(
+                let request_mesh_id = utils::generate_rand_id();
+                let packet_row_id = match self.db.log_packet_with_mesh_id(
                     msg.from_node,
                     Some(target_node),
                     msg.mesh_channel,
@@ -202,8 +204,58 @@ impl Bot {
                     None,
                     None,
                     None,
+                    Some(request_mesh_id),
                     "traceroute",
+                ) {
+                    Ok(id) => id,
+                    Err(e) => {
+                        log::error!(
+                            "Failed to log queued traceroute to DB !{:08x}: {}",
+                            target_node,
+                            e
+                        );
+                        -1
+                    }
+                };
+                let trace_key =
+                    Self::traceroute_session_key(msg.from_node, Some(target_node), request_mesh_id);
+                log::trace!(
+                    "Outgoing traceroute detail [trace_key={} request_id={} packet_row_id={} from=!{:08x} to=!{:08x}]",
+                    trace_key,
+                    request_mesh_id,
+                    packet_row_id,
+                    msg.from_node,
+                    target_node
                 );
+                if packet_row_id > 0 {
+                    match self.db.log_traceroute_observation(
+                        packet_row_id,
+                        &trace_key,
+                        msg.from_node,
+                        Some(target_node),
+                        false,
+                        None,
+                        None,
+                        None,
+                        None,
+                        &[],
+                        &[],
+                        "route",
+                        "route_back",
+                    ) {
+                        Ok(()) => log::trace!(
+                            "Outgoing traceroute session updated [trace_key={} packet_row_id={}]",
+                            trace_key,
+                            packet_row_id
+                        ),
+                        Err(e) => log::error!(
+                            "Outgoing traceroute session update failed [trace_key={} packet_row_id={}]: {}",
+                            trace_key,
+                            packet_row_id,
+                            e
+                        ),
+                    }
+                }
 
                 let routing = protobufs::Routing {
                     variant: Some(protobufs::routing::Variant::RouteRequest(
@@ -216,24 +268,32 @@ impl Bot {
                     )),
                 };
                 let payload = routing.encode_to_vec().into();
+                let mesh_packet = protobufs::MeshPacket {
+                    payload_variant: Some(protobufs::mesh_packet::PayloadVariant::Decoded(
+                        protobufs::Data {
+                            portnum: protobufs::PortNum::TracerouteApp as i32,
+                            payload,
+                            want_response: true,
+                            ..Default::default()
+                        },
+                    )),
+                    from: msg.from_node,
+                    to: target_node,
+                    id: request_mesh_id,
+                    want_ack: true,
+                    channel: msg.channel.channel(),
+                    ..Default::default()
+                };
                 let result = api
-                    .send_mesh_packet(
-                        router,
-                        payload,
-                        protobufs::PortNum::TracerouteApp,
-                        msg.destination,
-                        msg.channel,
-                        true,  // want_ack
-                        true,  // want_response
-                        false, // echo_response
-                        None,
-                        None,
-                    )
+                    .send_to_radio_packet(Some(protobufs::to_radio::PayloadVariant::Packet(
+                        mesh_packet,
+                    )))
                     .await;
                 if let Err(e) = result {
                     log::error!(
-                        "Failed to send queued traceroute to !{:08x}: {}",
+                        "Failed to send queued traceroute to !{:08x} [request_id={}]: {}",
                         target_node,
+                        request_mesh_id,
                         e
                     );
                 }
