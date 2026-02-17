@@ -7,6 +7,30 @@ use meshtastic::types::MeshChannel;
 use super::*;
 
 impl Bot {
+    fn decode_traceroute_routes(data: &protobufs::Data) -> (Vec<u32>, Vec<u32>) {
+        match meshtastic::Message::decode(data.payload.as_slice()) {
+            Ok(routing) => {
+                let routing: protobufs::Routing = routing;
+                match routing.variant {
+                    Some(protobufs::routing::Variant::RouteRequest(route)) => {
+                        (route.route, route.route_back)
+                    }
+                    _ => (Vec::new(), Vec::new()),
+                }
+            }
+            Err(_) => (Vec::new(), Vec::new()),
+        }
+    }
+
+    fn traceroute_trace_key(mesh_packet: &protobufs::MeshPacket) -> String {
+        let to_node = if mesh_packet.to == 0 {
+            "broadcast".to_string()
+        } else {
+            format!("{:08x}", mesh_packet.to)
+        };
+        format!("in:{:08x}:{}:{}", mesh_packet.from, to_node, mesh_packet.id)
+    }
+
     pub(super) async fn process_radio_packet(&self, my_node_id: u32, packet: protobufs::FromRadio) {
         let variant = match packet.payload_variant {
             Some(v) => v,
@@ -82,20 +106,23 @@ impl Bot {
         hop_count: Option<u32>,
         hop_start: Option<u32>,
         kind: &str,
-    ) {
-        let _ = self.db.log_packet(
-            mesh_packet.from,
-            to_node,
-            mesh_packet.channel,
-            "",
-            "in",
-            mesh_packet.via_mqtt,
-            rssi,
-            snr,
-            hop_count,
-            hop_start,
-            kind,
-        );
+    ) -> Option<i64> {
+        self.db
+            .log_packet_with_mesh_id(
+                mesh_packet.from,
+                to_node,
+                mesh_packet.channel,
+                "",
+                "in",
+                mesh_packet.via_mqtt,
+                rssi,
+                snr,
+                hop_count,
+                hop_start,
+                Some(mesh_packet.id),
+                kind,
+            )
+            .ok()
     }
 
     pub(super) async fn handle_mesh_packet(
@@ -157,6 +184,7 @@ impl Bot {
                 );
             }
             protobufs::PortNum::TracerouteApp => {
+                let (request_route, response_route) = Self::decode_traceroute_routes(data);
                 let destination = if mesh_packet.to == 0 {
                     "broadcast".to_string()
                 } else {
@@ -174,7 +202,7 @@ impl Bot {
                     mesh_packet.rx_rssi,
                     mesh_packet.rx_snr
                 );
-                self.log_incoming_packet(
+                if let Some(packet_row_id) = self.log_incoming_packet(
                     mesh_packet,
                     to_node,
                     rssi,
@@ -182,7 +210,22 @@ impl Bot {
                     hop_count,
                     hop_start,
                     "traceroute",
-                );
+                ) {
+                    let trace_key = Self::traceroute_trace_key(mesh_packet);
+                    let _ = self.db.log_traceroute_observation(
+                        packet_row_id,
+                        &trace_key,
+                        mesh_packet.from,
+                        to_node,
+                        mesh_packet.via_mqtt,
+                        hop_count,
+                        hop_start,
+                        None,
+                        None,
+                        &request_route,
+                        &response_route,
+                    );
+                }
             }
             protobufs::PortNum::NeighborinfoApp => {
                 self.log_incoming_packet(
@@ -280,7 +323,7 @@ impl Bot {
         );
 
         // Log incoming text message with RF metadata
-        let _ = self.db.log_packet(
+        let _ = self.db.log_packet_with_mesh_id(
             mesh_packet.from,
             if mesh_packet.to == 0 {
                 None
@@ -295,6 +338,7 @@ impl Bot {
             snr,
             hop_count,
             hop_start,
+            Some(mesh_packet.id),
             "text",
         );
 
@@ -331,8 +375,8 @@ impl Bot {
         log::debug!("NodeInfo: !{:08x} {} ({})", node_id, long_name, short_name);
 
         // Log nodeinfo packet (no RF metadata on NodeInfo)
-        let _ = self.db.log_packet(
-            node_id, None, 0, "", "in", via_mqtt, None, None, None, None, "nodeinfo",
+        let _ = self.db.log_packet_with_mesh_id(
+            node_id, None, 0, "", "in", via_mqtt, None, None, None, None, None, "nodeinfo",
         );
 
         // Skip dispatching events for our own node

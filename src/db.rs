@@ -110,6 +110,57 @@ pub struct TracerouteDestinationSummary {
     pub avg_hops: Option<f64>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct HopsToMeRow {
+    pub source_node: String,
+    pub source_short_name: String,
+    pub source_long_name: String,
+    pub samples: u64,
+    pub last_seen: i64,
+    pub last_hops: Option<u32>,
+    pub min_hops: Option<u32>,
+    pub avg_hops: Option<f64>,
+    pub max_hops: Option<u32>,
+    pub rf_count: u64,
+    pub mqtt_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TracerouteSessionRow {
+    pub id: i64,
+    pub trace_key: String,
+    pub src_node: String,
+    pub src_short_name: String,
+    pub src_long_name: String,
+    pub dst_node: String,
+    pub dst_short_name: String,
+    pub dst_long_name: String,
+    pub first_seen: i64,
+    pub last_seen: i64,
+    pub via_mqtt: bool,
+    pub request_hops: Option<u32>,
+    pub request_hop_start: Option<u32>,
+    pub response_hops: Option<u32>,
+    pub response_hop_start: Option<u32>,
+    pub status: String,
+    pub sample_count: u64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TracerouteSessionHop {
+    pub direction: String,
+    pub hop_index: u32,
+    pub node_id: String,
+    pub observed_at: i64,
+    pub source_kind: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TracerouteSessionDetail {
+    pub session: TracerouteSessionRow,
+    pub hops: Vec<TracerouteSessionHop>,
+}
+
 pub struct Db {
     conn: Mutex<Connection>,
 }
@@ -173,6 +224,7 @@ impl Db {
                 snr        REAL,
                 hop_count  INTEGER,
                 hop_start  INTEGER,
+                mesh_packet_id INTEGER,
                 packet_type TEXT NOT NULL DEFAULT 'text'
             );
 
@@ -195,6 +247,62 @@ impl Db {
             CREATE INDEX IF NOT EXISTS idx_packets_rf_hops_stats
             ON packets (direction, via_mqtt, from_node, hop_count)
             WHERE hop_count IS NOT NULL;",
+        )?;
+
+        let has_mesh_packet_id: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('packets') WHERE name = 'mesh_packet_id'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_mesh_packet_id == 0 {
+            conn.execute("ALTER TABLE packets ADD COLUMN mesh_packet_id INTEGER", [])?;
+        }
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS traceroute_sessions (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_key          TEXT NOT NULL UNIQUE,
+                first_seen         INTEGER NOT NULL,
+                last_seen          INTEGER NOT NULL,
+                src_node           INTEGER NOT NULL,
+                dst_node           INTEGER,
+                via_mqtt           INTEGER NOT NULL DEFAULT 0,
+                request_hops       INTEGER,
+                request_hop_start  INTEGER,
+                response_hops      INTEGER,
+                response_hop_start INTEGER,
+                request_packet_id  INTEGER,
+                response_packet_id INTEGER,
+                status             TEXT NOT NULL DEFAULT 'observed',
+                sample_count       INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY(request_packet_id) REFERENCES packets(id) ON DELETE SET NULL,
+                FOREIGN KEY(response_packet_id) REFERENCES packets(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS traceroute_session_hops (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id    INTEGER NOT NULL,
+                direction     TEXT NOT NULL,
+                hop_index     INTEGER NOT NULL,
+                node_id       INTEGER NOT NULL,
+                observed_at   INTEGER NOT NULL,
+                packet_id_ref INTEGER,
+                source_kind   TEXT NOT NULL DEFAULT 'route',
+                FOREIGN KEY(session_id) REFERENCES traceroute_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY(packet_id_ref) REFERENCES packets(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tr_sessions_last_seen
+            ON traceroute_sessions (last_seen DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_tr_sessions_src_dst
+            ON traceroute_sessions (src_node, dst_node, last_seen DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_tr_hops_session
+            ON traceroute_session_hops (session_id, direction, hop_index);
+
+            CREATE INDEX IF NOT EXISTS idx_tr_hops_packet_ref
+            ON traceroute_session_hops (packet_id_ref);",
         )?;
 
         Ok(())
@@ -485,6 +593,46 @@ impl Db {
     // --- Packet logging ---
 
     #[allow(clippy::too_many_arguments)]
+    fn log_packet_inner(
+        &self,
+        from_node: u32,
+        to_node: Option<u32>,
+        channel: u32,
+        text: &str,
+        direction: &str,
+        via_mqtt: bool,
+        rssi: Option<i32>,
+        snr: Option<f32>,
+        hop_count: Option<u32>,
+        hop_start: Option<u32>,
+        mesh_packet_id: Option<u32>,
+        packet_type: &str,
+    ) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO packets (timestamp, from_node, to_node, channel, text, direction, via_mqtt, rssi, snr, hop_count, hop_start, mesh_packet_id, packet_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                now,
+                from_node as i64,
+                to_node.map(|n| n as i64),
+                channel as i64,
+                text,
+                direction,
+                via_mqtt as i64,
+                rssi,
+                snr,
+                hop_count.map(|h| h as i64),
+                hop_start.map(|h| h as i64),
+                mesh_packet_id.map(|m| m as i64),
+                packet_type,
+            ],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn log_packet(
         &self,
         from_node: u32,
@@ -499,27 +647,53 @@ impl Db {
         hop_start: Option<u32>,
         packet_type: &str,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let conn = self.conn.lock().unwrap();
-        let now = Utc::now().timestamp();
-        conn.execute(
-            "INSERT INTO packets (timestamp, from_node, to_node, channel, text, direction, via_mqtt, rssi, snr, hop_count, hop_start, packet_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                now,
-                from_node as i64,
-                to_node.map(|n| n as i64),
-                channel as i64,
-                text,
-                direction,
-                via_mqtt as i64,
-                rssi,
-                snr,
-                hop_count.map(|h| h as i64),
-                hop_start.map(|h| h as i64),
-                packet_type,
-            ],
+        self.log_packet_inner(
+            from_node,
+            to_node,
+            channel,
+            text,
+            direction,
+            via_mqtt,
+            rssi,
+            snr,
+            hop_count,
+            hop_start,
+            None,
+            packet_type,
         )?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_packet_with_mesh_id(
+        &self,
+        from_node: u32,
+        to_node: Option<u32>,
+        channel: u32,
+        text: &str,
+        direction: &str,
+        via_mqtt: bool,
+        rssi: Option<i32>,
+        snr: Option<f32>,
+        hop_count: Option<u32>,
+        hop_start: Option<u32>,
+        mesh_packet_id: Option<u32>,
+        packet_type: &str,
+    ) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
+        self.log_packet_inner(
+            from_node,
+            to_node,
+            channel,
+            text,
+            direction,
+            via_mqtt,
+            rssi,
+            snr,
+            hop_count,
+            hop_start,
+            mesh_packet_id,
+            packet_type,
+        )
     }
 
     // --- Dashboard queries ---
@@ -1154,6 +1328,429 @@ impl Db {
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(rows)
+    }
+
+    fn traceroute_status(
+        request_hops: Option<u32>,
+        response_hops: Option<u32>,
+        request_route_len: usize,
+        response_route_len: usize,
+    ) -> &'static str {
+        let req_present = request_hops.is_some() || request_route_len > 0;
+        let res_present = response_hops.is_some() || response_route_len > 0;
+        if req_present && res_present {
+            "complete"
+        } else if req_present || res_present {
+            "partial"
+        } else {
+            "observed"
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn log_traceroute_observation(
+        &self,
+        packet_row_id: i64,
+        trace_key: &str,
+        src_node: u32,
+        dst_node: Option<u32>,
+        via_mqtt: bool,
+        request_hops: Option<u32>,
+        request_hop_start: Option<u32>,
+        response_hops: Option<u32>,
+        response_hop_start: Option<u32>,
+        request_route: &[u32],
+        response_route: &[u32],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let now = Utc::now().timestamp();
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        let session_id = {
+            let mut find_stmt = tx.prepare(
+                "SELECT id, first_seen, request_hops, request_hop_start, response_hops, response_hop_start, sample_count
+                 FROM traceroute_sessions
+                 WHERE trace_key = ?1
+                 LIMIT 1",
+            )?;
+            let existing = find_stmt.query_row(params![trace_key], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            });
+
+            match existing {
+                Ok((
+                    id,
+                    first_seen,
+                    req_hops_prev,
+                    req_start_prev,
+                    res_hops_prev,
+                    res_start_prev,
+                    sample_count,
+                )) => {
+                    let merged_req_hops = request_hops.or(req_hops_prev.map(|v| v as u32));
+                    let merged_req_start = request_hop_start.or(req_start_prev.map(|v| v as u32));
+                    let merged_res_hops = response_hops.or(res_hops_prev.map(|v| v as u32));
+                    let merged_res_start = response_hop_start.or(res_start_prev.map(|v| v as u32));
+                    let status = Self::traceroute_status(
+                        merged_req_hops,
+                        merged_res_hops,
+                        request_route.len(),
+                        response_route.len(),
+                    );
+                    tx.execute(
+                        "UPDATE traceroute_sessions
+                         SET first_seen = ?2,
+                             last_seen = ?3,
+                             src_node = ?4,
+                             dst_node = ?5,
+                             via_mqtt = ?6,
+                             request_hops = ?7,
+                             request_hop_start = ?8,
+                             response_hops = ?9,
+                             response_hop_start = ?10,
+                             request_packet_id = CASE WHEN ?7 IS NOT NULL THEN COALESCE(request_packet_id, ?11) ELSE request_packet_id END,
+                             response_packet_id = CASE WHEN ?9 IS NOT NULL THEN COALESCE(response_packet_id, ?11) ELSE response_packet_id END,
+                             status = ?12,
+                             sample_count = ?13
+                         WHERE id = ?1",
+                        params![
+                            id,
+                            std::cmp::min(first_seen, now),
+                            now,
+                            src_node as i64,
+                            dst_node.map(|n| n as i64),
+                            via_mqtt as i64,
+                            merged_req_hops.map(|v| v as i64),
+                            merged_req_start.map(|v| v as i64),
+                            merged_res_hops.map(|v| v as i64),
+                            merged_res_start.map(|v| v as i64),
+                            packet_row_id,
+                            status,
+                            sample_count + 1,
+                        ],
+                    )?;
+                    id
+                }
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    let status = Self::traceroute_status(
+                        request_hops,
+                        response_hops,
+                        request_route.len(),
+                        response_route.len(),
+                    );
+                    tx.execute(
+                        "INSERT INTO traceroute_sessions
+                         (trace_key, first_seen, last_seen, src_node, dst_node, via_mqtt, request_hops, request_hop_start, response_hops, response_hop_start, request_packet_id, response_packet_id, status, sample_count)
+                         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1)",
+                        params![
+                            trace_key,
+                            now,
+                            src_node as i64,
+                            dst_node.map(|n| n as i64),
+                            via_mqtt as i64,
+                            request_hops.map(|v| v as i64),
+                            request_hop_start.map(|v| v as i64),
+                            response_hops.map(|v| v as i64),
+                            response_hop_start.map(|v| v as i64),
+                            if request_hops.is_some() {
+                                Some(packet_row_id)
+                            } else {
+                                None
+                            },
+                            if response_hops.is_some() {
+                                Some(packet_row_id)
+                            } else {
+                                None
+                            },
+                            status,
+                        ],
+                    )?;
+                    tx.last_insert_rowid()
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
+
+        for (idx, node) in request_route.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO traceroute_session_hops (session_id, direction, hop_index, node_id, observed_at, packet_id_ref, source_kind)
+                 VALUES (?1, 'request', ?2, ?3, ?4, ?5, 'route')",
+                params![session_id, idx as i64, *node as i64, now, packet_row_id],
+            )?;
+        }
+        for (idx, node) in response_route.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO traceroute_session_hops (session_id, direction, hop_index, node_id, observed_at, packet_id_ref, source_kind)
+                 VALUES (?1, 'response', ?2, ?3, ?4, ?5, 'route_back')",
+                params![session_id, idx as i64, *node as i64, now, packet_row_id],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn dashboard_hops_to_me(
+        &self,
+        target_node: u32,
+        hours: u32,
+        filter: MqttFilter,
+    ) -> Result<Vec<HopsToMeRow>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
+        let mqtt_clause = match filter {
+            MqttFilter::All => "",
+            MqttFilter::LocalOnly => " AND p.via_mqtt = 0",
+            MqttFilter::MqttOnly => " AND p.via_mqtt = 1",
+        };
+
+        let query = format!(
+            "WITH filtered AS (
+                SELECT p.*
+                FROM packets p
+                WHERE p.direction = 'in'
+                  AND p.packet_type = 'traceroute'
+                  AND p.to_node = ?1
+                  AND p.timestamp > ?2
+                  {mqtt_clause}
+             ),
+             latest_hops AS (
+                SELECT from_node, hop_count,
+                       ROW_NUMBER() OVER (PARTITION BY from_node ORDER BY timestamp DESC, id DESC) AS rn
+                FROM filtered
+                WHERE hop_count IS NOT NULL
+             )
+             SELECT
+                f.from_node,
+                COALESCE(n.short_name, '') AS short_name,
+                COALESCE(n.long_name, '') AS long_name,
+                COUNT(*) AS samples,
+                MAX(f.timestamp) AS last_seen,
+                lh.hop_count AS last_hops,
+                MIN(f.hop_count) AS min_hops,
+                AVG(f.hop_count) AS avg_hops,
+                MAX(f.hop_count) AS max_hops,
+                SUM(CASE WHEN f.via_mqtt = 0 THEN 1 ELSE 0 END) AS rf_count,
+                SUM(CASE WHEN f.via_mqtt = 1 THEN 1 ELSE 0 END) AS mqtt_count
+             FROM filtered f
+             LEFT JOIN nodes n ON n.node_id = f.from_node
+             LEFT JOIN latest_hops lh ON lh.from_node = f.from_node AND lh.rn = 1
+             GROUP BY f.from_node, n.short_name, n.long_name, lh.hop_count
+             ORDER BY last_seen DESC"
+        );
+
+        let rows = conn
+            .prepare(&query)?
+            .query_map(params![target_node as i64, since], |row| {
+                let source_node_i64: i64 = row.get(0)?;
+                let samples: i64 = row.get(3)?;
+                let last_hops: Option<i64> = row.get(5)?;
+                let min_hops: Option<i64> = row.get(6)?;
+                let max_hops: Option<i64> = row.get(8)?;
+                let rf_count: i64 = row.get(9)?;
+                let mqtt_count: i64 = row.get(10)?;
+                Ok(HopsToMeRow {
+                    source_node: format!("!{:08x}", source_node_i64 as u32),
+                    source_short_name: row.get(1)?,
+                    source_long_name: row.get(2)?,
+                    samples: samples as u64,
+                    last_seen: row.get(4)?,
+                    last_hops: last_hops.map(|h| h as u32),
+                    min_hops: min_hops.map(|h| h as u32),
+                    avg_hops: row.get(7)?,
+                    max_hops: max_hops.map(|h| h as u32),
+                    rf_count: rf_count as u64,
+                    mqtt_count: mqtt_count as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn dashboard_traceroute_sessions(
+        &self,
+        hours: u32,
+        filter: MqttFilter,
+        limit: u32,
+    ) -> Result<Vec<TracerouteSessionRow>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let since = if hours == 0 {
+            0
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
+        let mqtt_clause = match filter {
+            MqttFilter::All => "",
+            MqttFilter::LocalOnly => " AND s.via_mqtt = 0",
+            MqttFilter::MqttOnly => " AND s.via_mqtt = 1",
+        };
+
+        let query = format!(
+            "SELECT
+                s.id,
+                s.trace_key,
+                s.src_node,
+                COALESCE(ns.short_name, '') AS src_short_name,
+                COALESCE(ns.long_name, '') AS src_long_name,
+                s.dst_node,
+                COALESCE(nd.short_name, '') AS dst_short_name,
+                COALESCE(nd.long_name, '') AS dst_long_name,
+                s.first_seen,
+                s.last_seen,
+                s.via_mqtt,
+                s.request_hops,
+                s.request_hop_start,
+                s.response_hops,
+                s.response_hop_start,
+                s.status,
+                s.sample_count
+             FROM traceroute_sessions s
+             LEFT JOIN nodes ns ON ns.node_id = s.src_node
+             LEFT JOIN nodes nd ON nd.node_id = s.dst_node
+             WHERE s.last_seen > ?1
+               {mqtt_clause}
+             ORDER BY s.last_seen DESC, s.id DESC
+             LIMIT ?2"
+        );
+
+        let rows = conn
+            .prepare(&query)?
+            .query_map(params![since, limit as i64], |row| {
+                let src_node_i64: i64 = row.get(2)?;
+                let dst_node_i64: Option<i64> = row.get(5)?;
+                let via_mqtt_i64: i64 = row.get(10)?;
+                let request_hops: Option<i64> = row.get(11)?;
+                let request_hop_start: Option<i64> = row.get(12)?;
+                let response_hops: Option<i64> = row.get(13)?;
+                let response_hop_start: Option<i64> = row.get(14)?;
+                let sample_count: i64 = row.get(16)?;
+                Ok(TracerouteSessionRow {
+                    id: row.get(0)?,
+                    trace_key: row.get(1)?,
+                    src_node: format!("!{:08x}", src_node_i64 as u32),
+                    src_short_name: row.get(3)?,
+                    src_long_name: row.get(4)?,
+                    dst_node: dst_node_i64
+                        .map(|n| format!("!{:08x}", n as u32))
+                        .unwrap_or_else(|| "broadcast".to_string()),
+                    dst_short_name: row.get(6)?,
+                    dst_long_name: row.get(7)?,
+                    first_seen: row.get(8)?,
+                    last_seen: row.get(9)?,
+                    via_mqtt: via_mqtt_i64 != 0,
+                    request_hops: request_hops.map(|v| v as u32),
+                    request_hop_start: request_hop_start.map(|v| v as u32),
+                    response_hops: response_hops.map(|v| v as u32),
+                    response_hop_start: response_hop_start.map(|v| v as u32),
+                    status: row.get(15)?,
+                    sample_count: sample_count as u64,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn dashboard_traceroute_session_detail(
+        &self,
+        session_id: i64,
+    ) -> Result<Option<TracerouteSessionDetail>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let session: Result<TracerouteSessionRow, _> = conn.query_row(
+            "SELECT
+                s.id,
+                s.trace_key,
+                s.src_node,
+                COALESCE(ns.short_name, '') AS src_short_name,
+                COALESCE(ns.long_name, '') AS src_long_name,
+                s.dst_node,
+                COALESCE(nd.short_name, '') AS dst_short_name,
+                COALESCE(nd.long_name, '') AS dst_long_name,
+                s.first_seen,
+                s.last_seen,
+                s.via_mqtt,
+                s.request_hops,
+                s.request_hop_start,
+                s.response_hops,
+                s.response_hop_start,
+                s.status,
+                s.sample_count
+             FROM traceroute_sessions s
+             LEFT JOIN nodes ns ON ns.node_id = s.src_node
+             LEFT JOIN nodes nd ON nd.node_id = s.dst_node
+             WHERE s.id = ?1",
+            params![session_id],
+            |row| {
+                let src_node_i64: i64 = row.get(2)?;
+                let dst_node_i64: Option<i64> = row.get(5)?;
+                let via_mqtt_i64: i64 = row.get(10)?;
+                let request_hops: Option<i64> = row.get(11)?;
+                let request_hop_start: Option<i64> = row.get(12)?;
+                let response_hops: Option<i64> = row.get(13)?;
+                let response_hop_start: Option<i64> = row.get(14)?;
+                let sample_count: i64 = row.get(16)?;
+                Ok(TracerouteSessionRow {
+                    id: row.get(0)?,
+                    trace_key: row.get(1)?,
+                    src_node: format!("!{:08x}", src_node_i64 as u32),
+                    src_short_name: row.get(3)?,
+                    src_long_name: row.get(4)?,
+                    dst_node: dst_node_i64
+                        .map(|n| format!("!{:08x}", n as u32))
+                        .unwrap_or_else(|| "broadcast".to_string()),
+                    dst_short_name: row.get(6)?,
+                    dst_long_name: row.get(7)?,
+                    first_seen: row.get(8)?,
+                    last_seen: row.get(9)?,
+                    via_mqtt: via_mqtt_i64 != 0,
+                    request_hops: request_hops.map(|v| v as u32),
+                    request_hop_start: request_hop_start.map(|v| v as u32),
+                    response_hops: response_hops.map(|v| v as u32),
+                    response_hop_start: response_hop_start.map(|v| v as u32),
+                    status: row.get(15)?,
+                    sample_count: sample_count as u64,
+                })
+            },
+        );
+
+        let session = match session {
+            Ok(s) => s,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        let hops = conn
+            .prepare(
+                "SELECT direction, hop_index, node_id, observed_at, source_kind
+                 FROM traceroute_session_hops
+                 WHERE session_id = ?1
+                 ORDER BY CASE direction WHEN 'request' THEN 0 WHEN 'response' THEN 1 ELSE 2 END, hop_index ASC, id ASC",
+            )?
+            .query_map(params![session_id], |row| {
+                let node_id_i64: i64 = row.get(2)?;
+                let hop_index_i64: i64 = row.get(1)?;
+                Ok(TracerouteSessionHop {
+                    direction: row.get(0)?,
+                    hop_index: hop_index_i64 as u32,
+                    node_id: format!("!{:08x}", node_id_i64 as u32),
+                    observed_at: row.get(3)?,
+                    source_kind: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Some(TracerouteSessionDetail { session, hops }))
     }
 }
 
@@ -1821,6 +2418,126 @@ mod tests {
             .find(|r| r.destination_node == "broadcast")
             .unwrap();
         assert_eq!(broadcast.requests, 1);
+    }
+
+    #[test]
+    fn test_dashboard_hops_to_me() {
+        let db = setup_db();
+        let me = 0x01020304;
+        let alice = 0xAAAAAAAA;
+        let bob = 0xBBBBBBBB;
+        db.upsert_node(alice, "ALC", "Alice", false).unwrap();
+        db.upsert_node(bob, "BOB", "Bob", true).unwrap();
+
+        db.log_packet(
+            alice,
+            Some(me),
+            0,
+            "",
+            "in",
+            false,
+            Some(-90),
+            Some(1.0),
+            Some(2),
+            Some(7),
+            "traceroute",
+        )
+        .unwrap();
+        db.log_packet(
+            alice,
+            Some(me),
+            0,
+            "",
+            "in",
+            false,
+            Some(-88),
+            Some(1.2),
+            Some(1),
+            Some(7),
+            "traceroute",
+        )
+        .unwrap();
+        db.log_packet(
+            bob,
+            Some(me),
+            0,
+            "",
+            "in",
+            true,
+            Some(-70),
+            Some(5.0),
+            Some(3),
+            Some(7),
+            "traceroute",
+        )
+        .unwrap();
+
+        let rows = db.dashboard_hops_to_me(me, 24, MqttFilter::All).unwrap();
+        assert_eq!(rows.len(), 2);
+        let alice_row = rows.iter().find(|r| r.source_node == "!aaaaaaaa").unwrap();
+        assert_eq!(alice_row.samples, 2);
+        assert_eq!(alice_row.last_hops, Some(1));
+        assert_eq!(alice_row.min_hops, Some(1));
+        assert_eq!(alice_row.max_hops, Some(2));
+        assert_eq!(alice_row.rf_count, 2);
+        assert_eq!(alice_row.mqtt_count, 0);
+    }
+
+    #[test]
+    fn test_traceroute_sessions_and_detail() {
+        let db = setup_db();
+        db.upsert_node(0xAAAAAAAA, "ALC", "Alice", false).unwrap();
+        db.upsert_node(0xBBBBBBBB, "BOB", "Bob", false).unwrap();
+        db.upsert_node(0xCCCCCCCC, "CAR", "Carol", false).unwrap();
+
+        let packet_id = db
+            .log_packet_with_mesh_id(
+                0xAAAAAAAA,
+                Some(0xBBBBBBBB),
+                0,
+                "",
+                "in",
+                false,
+                Some(-90),
+                Some(1.0),
+                Some(2),
+                Some(7),
+                Some(0x11223344),
+                "traceroute",
+            )
+            .unwrap();
+        db.log_traceroute_observation(
+            packet_id,
+            "in:aaaaaaaa:bbbbbbbb:287454020",
+            0xAAAAAAAA,
+            Some(0xBBBBBBBB),
+            false,
+            Some(2),
+            Some(7),
+            Some(3),
+            Some(7),
+            &[0xAAAAAAAA, 0xCCCCCCCC, 0xBBBBBBBB],
+            &[0xBBBBBBBB, 0xCCCCCCCC, 0xAAAAAAAA],
+        )
+        .unwrap();
+
+        let sessions = db
+            .dashboard_traceroute_sessions(24, MqttFilter::All, 50)
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.status, "complete");
+        assert_eq!(session.src_node, "!aaaaaaaa");
+        assert_eq!(session.dst_node, "!bbbbbbbb");
+        assert_eq!(session.request_hops, Some(2));
+
+        let detail = db
+            .dashboard_traceroute_session_detail(session.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(detail.hops.len(), 6);
+        assert_eq!(detail.hops[0].direction, "request");
+        assert_eq!(detail.hops[0].node_id, "!aaaaaaaa");
     }
 
     #[test]

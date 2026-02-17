@@ -5,8 +5,11 @@ import type {
   ThroughputBucket,
   DistributionBucket,
   QueueDepth,
+  HopsToMeRow,
   TracerouteDestinationRow,
   TracerouteEventRow,
+  TracerouteSessionDetail,
+  TracerouteSessionRow,
   MqttFilterValue,
   HoursValue,
   PacketTypeFilter,
@@ -22,6 +25,7 @@ import { HopChart } from "./components/HopChart";
 import { NodeTable } from "./components/NodeTable";
 import { NodeMap } from "./components/NodeMap";
 import { TracerouteTrafficPanel } from "./components/TracerouteTrafficPanel";
+import { TracerouteInsightsPanel } from "./components/TracerouteInsightsPanel";
 
 const REFRESH_INTERVAL = 30_000;
 
@@ -45,6 +49,12 @@ function App() {
   const [tracerouteDestinations, setTracerouteDestinations] = useState<
     TracerouteDestinationRow[] | null
   >(null);
+  const [hopsToMe, setHopsToMe] = useState<HopsToMeRow[] | null>(null);
+  const [tracerouteSessions, setTracerouteSessions] = useState<
+    TracerouteSessionRow[] | null
+  >(null);
+  const [selectedSession, setSelectedSession] =
+    useState<TracerouteSessionDetail | null>(null);
 
   const params = useMemo(() => {
     const p = new URLSearchParams({ mqtt });
@@ -55,25 +65,41 @@ function App() {
 
   const fetchAll = useCallback(async () => {
     const p = params.toString();
-    const [ov, nd, tp, pt, rs, sn, hp, qu, trEvents, trDestinations] =
-      await Promise.all([
-        fetch(`/api/overview?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/nodes?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/throughput?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(
-          `/api/packet-throughput?${p}${packetFilter !== "all" ? `&types=${packetFilter}` : ""}`,
-        ).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/rssi?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/snr?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/hops?${p}`).then((r) => (r.ok ? r.json() : null)),
-        fetch("/api/queue").then((r) => (r.ok ? r.json() : null)),
-        fetch(`/api/traceroute-events?${p}`).then((r) =>
-          r.ok ? r.json() : null,
-        ),
-        fetch(`/api/traceroute-destinations?${p}`).then((r) =>
-          r.ok ? r.json() : null,
-        ),
-      ]);
+    const [
+      ov,
+      nd,
+      tp,
+      pt,
+      rs,
+      sn,
+      hp,
+      qu,
+      trEvents,
+      trDestinations,
+      trHopsToMe,
+      trSessions,
+    ] = await Promise.all([
+      fetch(`/api/overview?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/nodes?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/throughput?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(
+        `/api/packet-throughput?${p}${packetFilter !== "all" ? `&types=${packetFilter}` : ""}`,
+      ).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/rssi?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/snr?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/hops?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch("/api/queue").then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/traceroute-events?${p}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
+      fetch(`/api/traceroute-destinations?${p}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
+      fetch(`/api/hops-to-me?${p}`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/traceroute-sessions?${p}`).then((r) =>
+        r.ok ? r.json() : null,
+      ),
+    ]);
     setOverview(ov);
     setNodes(nd);
     setThroughput(tp);
@@ -84,7 +110,16 @@ function App() {
     setQueue(qu);
     setTracerouteEvents(trEvents);
     setTracerouteDestinations(trDestinations);
+    setHopsToMe(trHopsToMe);
+    setTracerouteSessions(trSessions);
   }, [params, packetFilter]);
+
+  const fetchSessionDetail = useCallback(async (sessionId: number) => {
+    const row = await fetch(`/api/traceroute-sessions/${sessionId}`).then(
+      (r) => (r.ok ? r.json() : null),
+    );
+    setSelectedSession(row);
+  }, []);
 
   useEffect(() => {
     // Schedule initial fetch on next tick to avoid sync setState in effect body.
@@ -142,6 +177,12 @@ function App() {
         <TracerouteTrafficPanel
           events={tracerouteEvents}
           destinations={tracerouteDestinations}
+        />
+        <TracerouteInsightsPanel
+          hopsToMe={hopsToMe}
+          sessions={tracerouteSessions}
+          selectedSession={selectedSession}
+          onSelectSession={fetchSessionDetail}
         />
 
         <NodeMap nodes={nodes} />
