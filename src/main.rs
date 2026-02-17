@@ -11,23 +11,35 @@ mod util;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::io::Write;
 
 use bridge::create_bridge_channels;
 use bridges::discord::BridgeDirection as DiscordDirection;
 use bridges::{
     BridgeDirection, DiscordBridge, DiscordBridgeConfig, TelegramBridge, TelegramBridgeConfig,
 };
+use chrono::Local;
 use config::Config;
 use dashboard::Dashboard;
 use db::Db;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    env_logger::Builder::from_env(
+    let mut logger = env_logger::Builder::from_env(
         env_logger::Env::default()
             .default_filter_or("info,meshtastic::connections::stream_buffer=off"),
-    )
-    .init();
+    );
+    logger.format(|buf, record| {
+        writeln!(
+            buf,
+            "[{} {} {}] {}",
+            Local::now().format("%Y-%m-%dT%H:%M:%S%:z"),
+            record.level(),
+            record.target(),
+            record.args()
+        )
+    });
+    logger.init();
 
     let config_path = std::env::args()
         .nth(1)
