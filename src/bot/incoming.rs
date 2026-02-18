@@ -7,22 +7,6 @@ use meshtastic::types::MeshChannel;
 use super::*;
 
 impl Bot {
-    fn empty_routes() -> (Vec<u32>, Vec<u32>) {
-        (Vec::new(), Vec::new())
-    }
-
-    fn format_route(route: &[u32]) -> String {
-        if route.is_empty() {
-            return "[]".to_string();
-        }
-        let nodes = route
-            .iter()
-            .map(|n| format!("!{:08x}", n))
-            .collect::<Vec<_>>()
-            .join(" -> ");
-        format!("[{}]", nodes)
-    }
-
     fn decode_traceroute_routes(data: &protobufs::Data) -> (Vec<u32>, Vec<u32>) {
         match meshtastic::Message::decode(data.payload.as_slice()) {
             Ok(routing) => {
@@ -31,65 +15,20 @@ impl Bot {
                     Some(protobufs::routing::Variant::RouteRequest(route)) => {
                         (route.route, route.route_back)
                     }
-                    Some(protobufs::routing::Variant::RouteReply(route)) => {
-                        if route.route_back.is_empty() {
-                            (Vec::new(), route.route)
-                        } else {
-                            (Vec::new(), route.route_back)
-                        }
-                    }
-                    _ => Self::empty_routes(),
+                    _ => (Vec::new(), Vec::new()),
                 }
             }
-            Err(e) => {
-                log::debug!("Failed to decode traceroute payload as Routing: {}", e);
-                Self::empty_routes()
-            }
+            Err(_) => (Vec::new(), Vec::new()),
         }
     }
 
-    fn decode_routing_variant(data: &protobufs::Data) -> Option<(String, Vec<u32>, Vec<u32>)> {
-        match meshtastic::Message::decode(data.payload.as_slice()) {
-            Ok(routing) => {
-                let routing: protobufs::Routing = routing;
-                match routing.variant {
-                    Some(protobufs::routing::Variant::RouteRequest(route)) => {
-                        let request_len = route.route.len();
-                        let response_len = route.route_back.len();
-                        Some((
-                            format!(
-                                "route_request(route_len={}, route_back_len={})",
-                                request_len, response_len
-                            ),
-                            route.route,
-                            route.route_back,
-                        ))
-                    }
-                    Some(protobufs::routing::Variant::RouteReply(route)) => {
-                        let request_len = route.route.len();
-                        let response_len = route.route_back.len();
-                        let response_route = if route.route_back.is_empty() {
-                            route.route.clone()
-                        } else {
-                            route.route_back.clone()
-                        };
-                        Some((
-                            format!(
-                                "route_reply(route_len={}, route_back_len={})",
-                                request_len, response_len
-                            ),
-                            route.route,
-                            response_route,
-                        ))
-                    }
-                    Some(protobufs::routing::Variant::ErrorReason(err)) => {
-                        Some((format!("error_reason={:?}", err), Vec::new(), Vec::new()))
-                    }
-                    None => Some(("none".to_string(), Vec::new(), Vec::new())),
-                }
-            }
-            Err(_) => None,
-        }
+    fn traceroute_trace_key(mesh_packet: &protobufs::MeshPacket) -> String {
+        let to_node = if mesh_packet.to == 0 {
+            "broadcast".to_string()
+        } else {
+            format!("{:08x}", mesh_packet.to)
+        };
+        format!("in:{:08x}:{}:{}", mesh_packet.from, to_node, mesh_packet.id)
     }
 
     pub(super) async fn process_radio_packet(&self, my_node_id: u32, packet: protobufs::FromRadio) {
@@ -251,24 +190,6 @@ impl Bot {
                 } else {
                     format!("!{:08x}", mesh_packet.to)
                 };
-                let is_response = data.request_id != 0;
-                let session_src = if is_response {
-                    to_node.unwrap_or(mesh_packet.from)
-                } else {
-                    mesh_packet.from
-                };
-                let session_dst = if is_response {
-                    Some(mesh_packet.from)
-                } else {
-                    to_node
-                };
-                let request_mesh_id = if is_response {
-                    data.request_id
-                } else {
-                    mesh_packet.id
-                };
-                let trace_key =
-                    Self::traceroute_session_key(session_src, session_dst, request_mesh_id);
                 log::info!(
                     "Traceroute from !{:08x} to {} [msg_id={}] (ch={}, {}, hops={}/{}, rssi={}, snr={:.1})",
                     mesh_packet.from,
@@ -281,15 +202,6 @@ impl Bot {
                     mesh_packet.rx_rssi,
                     mesh_packet.rx_snr
                 );
-                log::trace!(
-                    "Traceroute detail [msg_id={} trace_key={}]: request_len={} request_path={} response_len={} response_path={}",
-                    mesh_packet.id,
-                    trace_key,
-                    request_route.len(),
-                    Self::format_route(&request_route),
-                    response_route.len(),
-                    Self::format_route(&response_route)
-                );
                 if let Some(packet_row_id) = self.log_incoming_packet(
                     mesh_packet,
                     to_node,
@@ -299,60 +211,19 @@ impl Bot {
                     hop_start,
                     "traceroute",
                 ) {
-                    log::trace!(
-                        "Traceroute packet logged [msg_id={} trace_key={} packet_row_id={}]",
-                        mesh_packet.id,
-                        trace_key,
-                        packet_row_id
-                    );
-                    match self.db.log_traceroute_observation(
+                    let trace_key = Self::traceroute_trace_key(mesh_packet);
+                    let _ = self.db.log_traceroute_observation(
                         packet_row_id,
                         &trace_key,
-                        session_src,
-                        session_dst,
+                        mesh_packet.from,
+                        to_node,
                         mesh_packet.via_mqtt,
-                        if is_response { None } else { hop_count },
-                        if is_response { None } else { hop_start },
-                        if is_response { hop_count } else { None },
-                        if is_response { hop_start } else { None },
-                        if is_response { &[] } else { &request_route },
-                        if is_response {
-                            if response_route.is_empty() {
-                                &request_route
-                            } else {
-                                &response_route
-                            }
-                        } else {
-                            &response_route
-                        },
-                        "route",
-                        "route_back",
-                    ) {
-                        Ok(()) => {
-                            log::trace!(
-                                "Traceroute session updated [msg_id={} trace_key={} packet_row_id={} req_hops={:?} req_start={:?}]",
-                                mesh_packet.id,
-                                trace_key,
-                                packet_row_id,
-                                hop_count,
-                                hop_start
-                            );
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Traceroute session update failed [msg_id={} trace_key={} packet_row_id={}]: {}",
-                                mesh_packet.id,
-                                trace_key,
-                                packet_row_id,
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    log::error!(
-                        "Traceroute packet log insert failed [msg_id={} trace_key={}]",
-                        mesh_packet.id,
-                        trace_key
+                        hop_count,
+                        hop_start,
+                        None,
+                        None,
+                        &request_route,
+                        &response_route,
                     );
                 }
             }
@@ -368,25 +239,7 @@ impl Bot {
                 );
             }
             protobufs::PortNum::RoutingApp => {
-                let (routing_variant, routing_request_route, routing_response_route) =
-                    Self::decode_routing_variant(data)
-                        .unwrap_or_else(|| ("decode_failed".to_string(), Vec::new(), Vec::new()));
-                log::trace!(
-                    "Routing packet [msg_id={} from=!{:08x} to={} request_id={} reply_id={} variant={} req_path={} res_path={}]",
-                    mesh_packet.id,
-                    mesh_packet.from,
-                    if mesh_packet.to == 0 {
-                        "broadcast".to_string()
-                    } else {
-                        format!("!{:08x}", mesh_packet.to)
-                    },
-                    data.request_id,
-                    data.reply_id,
-                    routing_variant,
-                    Self::format_route(&routing_request_route),
-                    Self::format_route(&routing_response_route),
-                );
-                let packet_row_id = self.log_incoming_packet(
+                self.log_incoming_packet(
                     mesh_packet,
                     to_node,
                     rssi,
@@ -395,77 +248,6 @@ impl Bot {
                     hop_start,
                     "routing",
                 );
-                if data.request_id != 0 {
-                    match self
-                        .db
-                        .find_traceroute_session_by_request_mesh_id(data.request_id, 3600)
-                    {
-                        Ok(Some((trace_key, session_src, session_dst))) => {
-                            log::trace!(
-                                "Routing correlation matched traceroute session [routing_msg_id={} request_id={} trace_key={} src=!{:08x} dst={}]",
-                                mesh_packet.id,
-                                data.request_id,
-                                trace_key,
-                                session_src,
-                                session_dst
-                                    .map(|n| format!("!{:08x}", n))
-                                    .unwrap_or_else(|| "broadcast".to_string())
-                            );
-                            if let Some(packet_row_id) = packet_row_id {
-                                match self.db.log_traceroute_observation(
-                                    packet_row_id,
-                                    &trace_key,
-                                    session_src,
-                                    session_dst,
-                                    mesh_packet.via_mqtt,
-                                    None,
-                                    None,
-                                    hop_count,
-                                    hop_start,
-                                    &routing_request_route,
-                                    &routing_response_route,
-                                    "routing_route",
-                                    "routing_route_back",
-                                ) {
-                                    Ok(()) => log::trace!(
-                                        "Routing-updated traceroute session [routing_msg_id={} trace_key={} packet_row_id={}]",
-                                        mesh_packet.id,
-                                        trace_key,
-                                        packet_row_id
-                                    ),
-                                    Err(e) => log::error!(
-                                        "Routing->traceroute session update failed [routing_msg_id={} trace_key={} packet_row_id={}]: {}",
-                                        mesh_packet.id,
-                                        trace_key,
-                                        packet_row_id,
-                                        e
-                                    ),
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            log::trace!(
-                                "Routing correlation skipped (no matching traceroute request session) [routing_msg_id={} request_id={} from=!{:08x} to={}]",
-                                mesh_packet.id,
-                                data.request_id,
-                                mesh_packet.from,
-                                if mesh_packet.to == 0 {
-                                    "broadcast".to_string()
-                                } else {
-                                    format!("!{:08x}", mesh_packet.to)
-                                }
-                            );
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Routing correlation lookup failed [routing_msg_id={} request_id={}]: {}",
-                                mesh_packet.id,
-                                data.request_id,
-                                e
-                            );
-                        }
-                    }
-                }
             }
             protobufs::PortNum::TextMessageApp => {
                 self.handle_text_message(
@@ -654,76 +436,5 @@ impl Bot {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use meshtastic::Message;
-
-    fn routing_data(variant: protobufs::routing::Variant) -> protobufs::Data {
-        let routing = protobufs::Routing {
-            variant: Some(variant),
-        };
-        protobufs::Data {
-            portnum: protobufs::PortNum::RoutingApp as i32,
-            payload: routing.encode_to_vec().into(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn test_decode_routing_variant_route_request_extracts_paths() {
-        let data = routing_data(protobufs::routing::Variant::RouteRequest(
-            protobufs::RouteDiscovery {
-                route: vec![0x11111111, 0x22222222],
-                snr_towards: vec![],
-                route_back: vec![0x33333333, 0x44444444],
-                snr_back: vec![],
-            },
-        ));
-
-        let (label, req, res) = Bot::decode_routing_variant(&data).expect("decoded");
-        assert!(label.starts_with("route_request("));
-        assert_eq!(req, vec![0x11111111, 0x22222222]);
-        assert_eq!(res, vec![0x33333333, 0x44444444]);
-    }
-
-    #[test]
-    fn test_decode_routing_variant_route_reply_prefers_route_back_or_route() {
-        let with_back = routing_data(protobufs::routing::Variant::RouteReply(
-            protobufs::RouteDiscovery {
-                route: vec![0xaaaaaaaa],
-                snr_towards: vec![],
-                route_back: vec![0xbbbbbbbb],
-                snr_back: vec![],
-            },
-        ));
-        let (_, req1, res1) = Bot::decode_routing_variant(&with_back).expect("decoded");
-        assert_eq!(req1, vec![0xaaaaaaaa]);
-        assert_eq!(res1, vec![0xbbbbbbbb]);
-
-        let no_back = routing_data(protobufs::routing::Variant::RouteReply(
-            protobufs::RouteDiscovery {
-                route: vec![0xcccccccc, 0xdddddddd],
-                snr_towards: vec![],
-                route_back: vec![],
-                snr_back: vec![],
-            },
-        ));
-        let (_, req2, res2) = Bot::decode_routing_variant(&no_back).expect("decoded");
-        assert_eq!(req2, vec![0xcccccccc, 0xdddddddd]);
-        assert_eq!(res2, vec![0xcccccccc, 0xdddddddd]);
-    }
-
-    #[test]
-    fn test_decode_routing_variant_returns_none_for_invalid_payload() {
-        let data = protobufs::Data {
-            portnum: protobufs::PortNum::RoutingApp as i32,
-            payload: vec![0xff, 0x00, 0x13].into(),
-            ..Default::default()
-        };
-        assert!(Bot::decode_routing_variant(&data).is_none());
     }
 }

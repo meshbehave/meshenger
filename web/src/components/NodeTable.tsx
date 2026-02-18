@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { DashboardNode } from "../types";
+import { PaginationControls } from "./PaginationControls";
 
 interface Props {
   nodes: DashboardNode[] | null;
@@ -50,15 +51,9 @@ function formatHopSummary(
 export function NodeTable({ nodes }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("last_seen");
   const [sortAsc, setSortAsc] = useState(false);
-
-  if (!nodes || nodes.length === 0) {
-    return (
-      <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
-        <h3 className="text-sm font-medium text-slate-400 mb-3">Nodes</h3>
-        <span className="text-slate-500">No nodes seen</span>
-      </div>
-    );
-  }
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const nodeRows = useMemo(() => nodes ?? [], [nodes]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -69,44 +64,65 @@ export function NodeTable({ nodes }: Props) {
     }
   };
 
-  const sorted = [...nodes].sort((a, b) => {
-    if (sortKey === "via_mqtt") {
-      const va = a.via_mqtt ? 1 : 0;
-      const vb = b.via_mqtt ? 1 : 0;
-      return sortAsc ? va - vb : vb - va;
-    }
-    if (sortKey === "last_hop") {
-      const va = a.last_hop ?? -1;
-      const vb = b.last_hop ?? -1;
-      return sortAsc ? va - vb : vb - va;
-    }
-    if (sortKey === "last_rf_seen") {
-      const va = a.last_rf_seen ?? 0;
-      const vb = b.last_rf_seen ?? 0;
-      return sortAsc ? va - vb : vb - va;
-    }
-    if (sortKey === "hop_samples") {
-      return sortAsc
-        ? a.hop_samples - b.hop_samples
-        : b.hop_samples - a.hop_samples;
-    }
-    const va = a[sortKey];
-    const vb = b[sortKey];
-    if (typeof va === "string" && typeof vb === "string") {
-      return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
-    }
-    return sortAsc
-      ? (va as number) - (vb as number)
-      : (vb as number) - (va as number);
-  });
+  const sorted = useMemo(
+    () =>
+      [...nodeRows].sort((a, b) => {
+        if (sortKey === "via_mqtt") {
+          const va = a.via_mqtt ? 1 : 0;
+          const vb = b.via_mqtt ? 1 : 0;
+          return sortAsc ? va - vb : vb - va;
+        }
+        if (sortKey === "last_hop") {
+          const va = a.last_hop ?? -1;
+          const vb = b.last_hop ?? -1;
+          return sortAsc ? va - vb : vb - va;
+        }
+        if (sortKey === "last_rf_seen") {
+          const va = a.last_rf_seen ?? 0;
+          const vb = b.last_rf_seen ?? 0;
+          return sortAsc ? va - vb : vb - va;
+        }
+        if (sortKey === "hop_samples") {
+          return sortAsc
+            ? a.hop_samples - b.hop_samples
+            : b.hop_samples - a.hop_samples;
+        }
+        const va = a[sortKey];
+        const vb = b[sortKey];
+        if (typeof va === "string" && typeof vb === "string") {
+          return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+        }
+        return sortAsc
+          ? (va as number) - (vb as number)
+          : (vb as number) - (va as number);
+      }),
+    [nodeRows, sortAsc, sortKey],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  const paged = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [pageSize, safePage, sorted]);
 
   const arrow = (key: SortKey) =>
     sortKey === key ? (sortAsc ? " ^" : " v") : "";
 
+  if (nodeRows.length === 0) {
+    return (
+      <div className="bg-slate-800 rounded-lg p-4 border border-slate-700">
+        <h3 className="text-sm font-medium text-slate-400 mb-3">Nodes</h3>
+        <span className="text-slate-500">No nodes seen</span>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-slate-800 rounded-lg p-4 border border-slate-700 overflow-x-auto">
       <h3 className="text-sm font-medium text-slate-400 mb-3">
-        Nodes ({nodes.length})
+        Nodes ({nodeRows.length})
       </h3>
       <table className="w-full text-sm">
         <thead>
@@ -157,7 +173,7 @@ export function NodeTable({ nodes }: Props) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((node) => (
+          {paged.map((node) => (
             <tr
               key={node.node_id}
               className="border-b border-slate-700/50 hover:bg-slate-700/30"
@@ -188,6 +204,16 @@ export function NodeTable({ nodes }: Props) {
           ))}
         </tbody>
       </table>
+      <PaginationControls
+        page={safePage}
+        pageSize={pageSize}
+        total={sorted.length}
+        onPageChange={setPage}
+        onPageSizeChange={(value) => {
+          setPageSize(value);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

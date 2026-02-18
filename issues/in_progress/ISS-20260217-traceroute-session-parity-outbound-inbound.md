@@ -1,7 +1,7 @@
 # ID: ISS-20260217-traceroute-session-parity-outbound-inbound
 
 Title: Achieve full traceroute session parity by correlating outbound probes with inbound responses
-Status: resolved
+Status: in_progress
 Reported: 2026-02-17
 Reporter: user
 Severity: medium
@@ -108,6 +108,7 @@ Final scoped behavior (resolved):
 - Related log script: `scripts/run-meshenger-live-test.sh`
 - Live test evidence log: `/tmp/meshenger-live-test-20260217-195129.log`
 - Commit: `9ba3824`
+- Reverted commit (as discussed): `9ba38241d27e9dc2f9ce287bdc83bc6289b0a290`
 
 ## Timeline
 
@@ -136,3 +137,4 @@ Final scoped behavior (resolved):
 - 2026-02-17 23:01 - Frontend session detail updated to render phone-style `Route` with optional `Route Back`; when hop rows are absent it now shows `Path unavailable on this node`.
 - 2026-02-17 23:26 - Added session table guidance text (session-key + Request/Response/Samples definitions) in frontend/docs.
 - 2026-02-17 23:26 - Issue closed as resolved under connected-node traceroute visibility scope.
+- 2026-02-18 07:01 - Reopened to in_progress and reverted code introduced by `9ba38241d27e9dc2f9ce287bdc83bc6289b0a290` as per discussion: behavior is too flaky in live operation (request-side hop fields mostly blank and session history not reliably showing usable hop metadata).

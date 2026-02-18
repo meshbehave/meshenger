@@ -2,7 +2,7 @@ use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, Sse};
 use axum::response::Json;
@@ -118,12 +118,6 @@ impl Dashboard {
             .route(
                 "/api/traceroute-destinations",
                 get(handle_traceroute_destinations),
-            )
-            .route("/api/hops-to-me", get(handle_hops_to_me))
-            .route("/api/traceroute-sessions", get(handle_traceroute_sessions))
-            .route(
-                "/api/traceroute-sessions/{id}",
-                get(handle_traceroute_session_detail),
             )
             .route("/api/positions", get(handle_positions))
             .route("/api/queue", get(handle_queue))
@@ -308,55 +302,6 @@ async fn handle_traceroute_destinations(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     to_json(rows)
-}
-
-async fn handle_hops_to_me(
-    State(state): State<AppState>,
-    Query(params): Query<HoursParam>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let local_node_id = state.local_node_id.load(Ordering::Relaxed);
-    if local_node_id == 0 {
-        return to_json(Vec::<serde_json::Value>::new());
-    }
-
-    let filter = MqttFilter::from_str(&params.mqtt);
-    let rows = state
-        .db
-        .dashboard_hops_to_me(local_node_id, params.hours, filter)
-        .map_err(|e| {
-            log::error!("Dashboard hops-to-me error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    to_json(rows)
-}
-
-async fn handle_traceroute_sessions(
-    State(state): State<AppState>,
-    Query(params): Query<HoursParam>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let filter = MqttFilter::from_str(&params.mqtt);
-    let rows = state
-        .db
-        .dashboard_traceroute_sessions(params.hours, filter, 200)
-        .map_err(|e| {
-            log::error!("Dashboard traceroute sessions error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    to_json(rows)
-}
-
-async fn handle_traceroute_session_detail(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row = state
-        .db
-        .dashboard_traceroute_session_detail(id)
-        .map_err(|e| {
-            log::error!("Dashboard traceroute session detail error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    to_json(row)
 }
 
 async fn handle_queue(State(state): State<AppState>) -> Json<QueueResponse> {

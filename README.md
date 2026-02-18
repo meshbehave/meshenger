@@ -22,9 +22,7 @@ Meshenger connects to a [Meshtastic](https://meshtastic.org/) node via TCP and h
 
 **Tracks everything** — Every packet type (text, position, telemetry, traceroute, etc.) is logged with RF metadata. Nodes are tagged as MQTT or local RF based on their transport method.
 
-**Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, traceroute traffic tabs (recent events and destination summary across all seen traceroute packets), traceroute insights (hops-to-me aggregates by source and per-session path view), node table/map with MQTT/RF badges and per-node hop summary (last/avg/min), configurable time ranges (1d to 1y), and MQTT filtering. Traceroute session correlation uses Meshtastic request/response IDs (`request.id` ↔ `response.request_id`) via canonical session key `req:<src>:<dst>:<request_id>`. Path hops are recorded from traceroute/routing payload vectors when firmware provides them; session detail renders `Route` and optional `Route Back` (or `Path unavailable on this node` when absent).
-
-In the Traceroute Insights `Sessions` table: `Request`/`Response` columns show `hop_count/hop_start` when available, and `Samples` is the number of packet observations merged into the same session key.
+**Dashboard** — Optional web dashboard with real-time metrics: message/packet throughput charts, RSSI/SNR distributions, hop counts, traceroute traffic tabs (recent events and destination summary across all seen traceroute packets), node table/map with MQTT/RF badges and per-node hop summary (last/avg/min), configurable time ranges (1d to 1y), and MQTT filtering. Large dashboard tables are frontend-paginated (no API pagination required).
 
 **Optional auto traceroute probe** — Can periodically send a low-frequency traceroute to recently-seen RF nodes that still lack hop metadata, reusing the bot's existing outgoing queue and pacing.
 
