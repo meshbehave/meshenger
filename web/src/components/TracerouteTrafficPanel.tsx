@@ -7,6 +7,7 @@ import type {
   TracerouteSessionRow,
 } from "../types";
 import { PaginationControls } from "./PaginationControls";
+import { buildPathSegs, buildFullText } from "../utils/pathDisplay";
 
 interface Props {
   events: TracerouteEventRow[] | null;
@@ -211,9 +212,6 @@ function tabClass(active: boolean): string {
     : "px-3 py-1.5 rounded-md text-xs font-semibold text-slate-400 hover:text-slate-200 hover:bg-slate-700/60";
 }
 
-// Maximum number of path nodes to show before middle-truncating.
-const PATH_MAX_VISIBLE = 7;
-
 function PathDisplay({
   hops,
   srcName,
@@ -245,36 +243,14 @@ function PathDisplay({
   const dstLabel = dstNode ? label(dstName, dstNode) : "?";
   const isComplete = status === "complete";
 
-  // Full known path for tooltip text
-  const allParts = [srcLabel, ...reqHops, dstLabel];
-  if (resHops.length > 0) allParts.push(...resHops, srcLabel);
-  const fullText = allParts.join(" → ");
-
-  type Seg = { text: string; dim?: boolean };
-  let segs: Seg[];
-  const truncated = allParts.length > PATH_MAX_VISIBLE;
-
-  if (truncated) {
-    // Middle truncation: show first 2, dimmed "···", last 2
-    segs = [
-      { text: allParts[0] },
-      { text: allParts[1] },
-      { text: "···", dim: true },
-      { text: allParts[allParts.length - 2] },
-      { text: allParts[allParts.length - 1] },
-    ];
-  } else {
-    // Full path; for non-complete sessions insert a dimmed "···" gap before
-    // destination to signal that relay nodes between the last known hop and
-    // the destination may exist but were not observed by this node.
-    segs = [{ text: srcLabel }, ...reqHops.map((h) => ({ text: h }))];
-    if (!isComplete) segs.push({ text: "···", dim: true });
-    segs.push({ text: dstLabel });
-    if (resHops.length > 0) {
-      segs.push(...resHops.map((h) => ({ text: h })));
-      segs.push({ text: srcLabel });
-    }
-  }
+  const fullText = buildFullText(reqHops, resHops, srcLabel, dstLabel);
+  const { segs, didTruncate } = buildPathSegs(
+    reqHops,
+    resHops,
+    srcLabel,
+    dstLabel,
+    isComplete,
+  );
 
   const inner = (
     <span>
@@ -287,13 +263,13 @@ function PathDisplay({
     </span>
   );
 
-  if (!truncated) return inner;
+  if (!didTruncate) return inner;
 
   return (
     <Tooltip
       position="above"
       content={
-        <div className="max-w-sm rounded-md border border-slate-600 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 shadow-lg break-all">
+        <div className="max-w-xs rounded-md border border-slate-600 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-300 shadow-lg break-words">
           {fullText}
         </div>
       }

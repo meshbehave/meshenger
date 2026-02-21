@@ -19,6 +19,7 @@ cargo test                         # Run all tests
 cargo test test_name               # Run a specific test
 cargo test module_name::           # Run tests in a specific module
 cargo test -- --nocapture          # Show println output
+cd web && npm test                 # Run frontend unit tests (Vitest)
 RUST_LOG=debug cargo run           # Verbose logging
 RUST_LOG=meshenger=debug cargo run  # Crate-only debug logging
 scripts/run-with-web.sh            # Build web frontend, then run with config.toml

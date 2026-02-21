@@ -12,6 +12,9 @@ cargo clippy --all-targets --all-features
 
 if [ -f "$web_dir/package.json" ]; then
   if command -v npm >/dev/null 2>&1; then
+    echo "[pre-commit] running web tests"
+    npm --prefix "$web_dir" run -s test
+
     echo "[pre-commit] running web eslint"
     npm --prefix "$web_dir" run -s lint
 
