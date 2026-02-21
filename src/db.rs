@@ -114,6 +114,7 @@ pub struct Db {
     conn: Mutex<Connection>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Node {
@@ -137,11 +138,28 @@ pub struct NodeWithHop {
 impl Db {
     pub fn open(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let conn = Connection::open(path)?;
+        // WAL mode: reads never block writes; persists across reconnects.
+        // synchronous=NORMAL: safe with WAL (no data loss on OS crash).
+        // optimize: update query planner stats for tables changed since last run.
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA optimize;",
+        )?;
         let db = Self {
             conn: Mutex::new(conn),
         };
         db.init_schema()?;
         Ok(db)
+    }
+
+    /// Run PRAGMA optimize to update query planner statistics.
+    /// Safe to call periodically on a live connection — only analyzes tables
+    /// that have changed significantly since the last run.
+    pub fn optimize(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("PRAGMA optimize;")?;
+        Ok(())
     }
 
     fn init_schema(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -501,17 +519,6 @@ impl Db {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
-    }
-
-    /// Return the most recently seen RF node (within `max_age_secs`) that has no inbound RF hop metadata recorded.
-    pub fn recent_rf_node_missing_hops(
-        &self,
-        max_age_secs: u64,
-        exclude_node_id: Option<u32>,
-    ) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
-        let candidates =
-            self.recent_rf_nodes_missing_hops(max_age_secs, exclude_node_id, 1usize)?;
-        Ok(candidates.into_iter().next())
     }
 
     /// Return up to `limit` most recently seen RF nodes missing inbound RF hop metadata.
@@ -1290,6 +1297,7 @@ impl Db {
     }
 
     fn traceroute_status(
+        trace_key: &str,
         request_hops: Option<u32>,
         response_hops: Option<u32>,
         request_route_len: usize,
@@ -1297,7 +1305,12 @@ impl Db {
     ) -> &'static str {
         let req_present = request_hops.is_some() || request_route_len > 0;
         let res_present = response_hops.is_some() || response_route_len > 0;
-        if req_present && res_present {
+        // Only req: sessions (probes sent by us) may reach complete — we initiated
+        // the exchange and received the reply, so we have full end-to-end knowledge.
+        // in: sessions are passive observations; even with both sides seen we cap at
+        // partial because we cannot confirm the full path or that the exchange completed.
+        let can_be_complete = trace_key.starts_with("req:");
+        if req_present && res_present && can_be_complete {
             "complete"
         } else if req_present || res_present {
             "partial"
@@ -1359,6 +1372,7 @@ impl Db {
                     let merged_res_hops = response_hops.or(res_hops_prev.map(|v| v as u32));
                     let merged_res_start = response_hop_start.or(res_start_prev.map(|v| v as u32));
                     let status = Self::traceroute_status(
+                        trace_key,
                         merged_req_hops,
                         merged_res_hops,
                         request_route.len(),
@@ -1400,6 +1414,7 @@ impl Db {
                 }
                 Err(rusqlite::Error::QueryReturnedNoRows) => {
                     let status = Self::traceroute_status(
+                        trace_key,
                         request_hops,
                         response_hops,
                         request_route.len(),
@@ -1455,6 +1470,219 @@ impl Db {
 
         tx.commit()?;
         Ok(())
+    }
+
+    /// Check whether a traceroute session with the given trace_key was first seen
+    /// at or after `since_ts`. Used to correlate incoming RouteReply packets with
+    /// outgoing probe sessions within a bounded time window.
+    pub fn traceroute_session_exists_since(
+        &self,
+        trace_key: &str,
+        since_ts: i64,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.conn.lock().unwrap();
+        let result: Result<i64, _> = conn.query_row(
+            "SELECT 1 FROM traceroute_sessions
+             WHERE trace_key = ?1 AND first_seen >= ?2
+             LIMIT 1",
+            params![trace_key, since_ts],
+            |row| row.get(0),
+        );
+        match result {
+            Ok(_) => Ok(true),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn dashboard_traceroute_sessions(
+        &self,
+        hours: u32,
+        limit: usize,
+    ) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error + Send + Sync>> {
+        use std::collections::HashMap;
+
+        let conn = self.conn.lock().unwrap();
+        let since = if hours == 0 {
+            0i64
+        } else {
+            Utc::now().timestamp() - (hours as i64 * 3600)
+        };
+
+        // Query sessions with resolved node names.
+        let sessions_sql = "
+            SELECT
+                s.id,
+                s.trace_key,
+                s.first_seen,
+                s.last_seen,
+                s.src_node,
+                COALESCE(ns.short_name, NULL) AS src_short_name,
+                COALESCE(ns.long_name, NULL) AS src_long_name,
+                s.dst_node,
+                COALESCE(nd.short_name, NULL) AS dst_short_name,
+                COALESCE(nd.long_name, NULL) AS dst_long_name,
+                s.via_mqtt,
+                s.request_hops,
+                s.request_hop_start,
+                s.response_hops,
+                s.response_hop_start,
+                s.status,
+                s.sample_count
+            FROM traceroute_sessions s
+            LEFT JOIN nodes ns ON ns.node_id = s.src_node
+            LEFT JOIN nodes nd ON nd.node_id = s.dst_node
+            WHERE s.last_seen >= ?1
+            ORDER BY s.last_seen DESC, s.id DESC
+            LIMIT ?2";
+
+        struct SessionRow {
+            id: i64,
+            trace_key: String,
+            first_seen: i64,
+            last_seen: i64,
+            src_node: i64,
+            src_short_name: Option<String>,
+            src_long_name: Option<String>,
+            dst_node: Option<i64>,
+            dst_short_name: Option<String>,
+            dst_long_name: Option<String>,
+            via_mqtt: i64,
+            request_hops: Option<i64>,
+            request_hop_start: Option<i64>,
+            response_hops: Option<i64>,
+            response_hop_start: Option<i64>,
+            status: String,
+            sample_count: i64,
+        }
+
+        let rows: Vec<SessionRow> = conn
+            .prepare(sessions_sql)?
+            .query_map(params![since, limit as i64], |row| {
+                Ok(SessionRow {
+                    id: row.get(0)?,
+                    trace_key: row.get(1)?,
+                    first_seen: row.get(2)?,
+                    last_seen: row.get(3)?,
+                    src_node: row.get(4)?,
+                    src_short_name: row.get(5)?,
+                    src_long_name: row.get(6)?,
+                    dst_node: row.get(7)?,
+                    dst_short_name: row.get(8)?,
+                    dst_long_name: row.get(9)?,
+                    via_mqtt: row.get(10)?,
+                    request_hops: row.get(11)?,
+                    request_hop_start: row.get(12)?,
+                    response_hops: row.get(13)?,
+                    response_hop_start: row.get(14)?,
+                    status: row.get(15)?,
+                    sample_count: row.get(16)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Collect session IDs for the hops query.
+        let session_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+        let placeholders = session_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let hops_sql = format!(
+            "SELECT h.session_id, h.direction, h.hop_index, h.node_id,
+                    n.short_name, n.long_name
+             FROM traceroute_session_hops h
+             LEFT JOIN nodes n ON n.node_id = h.node_id
+             WHERE h.session_id IN ({})
+             ORDER BY h.session_id, h.direction, h.hop_index",
+            placeholders
+        );
+
+        struct HopRow {
+            session_id: i64,
+            direction: String,
+            hop_index: i64,
+            node_id: i64,
+            short_name: Option<String>,
+            long_name: Option<String>,
+        }
+
+        let mut hops_by_session: HashMap<i64, Vec<HopRow>> = HashMap::new();
+        {
+            let mut hops_stmt = conn.prepare(&hops_sql)?;
+            let params_refs: Vec<&dyn rusqlite::ToSql> = session_ids
+                .iter()
+                .map(|id| id as &dyn rusqlite::ToSql)
+                .collect();
+            let hop_rows = hops_stmt
+                .query_map(params_refs.as_slice(), |row| {
+                    Ok(HopRow {
+                        session_id: row.get(0)?,
+                        direction: row.get(1)?,
+                        hop_index: row.get(2)?,
+                        node_id: row.get(3)?,
+                        short_name: row.get(4)?,
+                        long_name: row.get(5)?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for hop in hop_rows {
+                hops_by_session.entry(hop.session_id).or_default().push(hop);
+            }
+        }
+
+        let result = rows
+            .into_iter()
+            .map(|s| {
+                let hops_json: Vec<serde_json::Value> = hops_by_session
+                    .get(&s.id)
+                    .map(|hops| {
+                        hops.iter()
+                            .map(|h| {
+                                serde_json::json!({
+                                    "direction": h.direction,
+                                    "hop_index": h.hop_index,
+                                    "node_id": format!("!{:08x}", h.node_id as u32),
+                                    "short_name": h.short_name,
+                                    "long_name": h.long_name,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let dst_node_str = s.dst_node.map(|n| format!("!{:08x}", n as u32));
+
+                serde_json::json!({
+                    "id": s.id,
+                    "trace_key": s.trace_key,
+                    "first_seen": s.first_seen,
+                    "last_seen": s.last_seen,
+                    "src_node": format!("!{:08x}", s.src_node as u32),
+                    "src_short_name": s.src_short_name,
+                    "src_long_name": s.src_long_name,
+                    "dst_node": dst_node_str,
+                    "dst_short_name": s.dst_short_name,
+                    "dst_long_name": s.dst_long_name,
+                    "via_mqtt": s.via_mqtt != 0,
+                    "request_hops": s.request_hops,
+                    "request_hop_start": s.request_hop_start,
+                    "response_hops": s.response_hops,
+                    "response_hop_start": s.response_hop_start,
+                    "status": s.status,
+                    "sample_count": s.sample_count,
+                    "hops": hops_json,
+                })
+            })
+            .collect();
+
+        Ok(result)
     }
 }
 
@@ -1664,7 +1892,11 @@ mod tests {
         )
         .unwrap();
 
-        let candidate = db.recent_rf_node_missing_hops(3600, None).unwrap();
+        let candidate = db
+            .recent_rf_nodes_missing_hops(3600, None, 1)
+            .unwrap()
+            .into_iter()
+            .next();
         assert_eq!(candidate, Some(0xAAAAAAAA));
     }
 
@@ -1675,8 +1907,10 @@ mod tests {
         db.upsert_node(0xBBBBBBBB, "B", "Bob", false).unwrap();
 
         let candidate = db
-            .recent_rf_node_missing_hops(3600, Some(0xAAAAAAAA))
-            .unwrap();
+            .recent_rf_nodes_missing_hops(3600, Some(0xAAAAAAAA), 1)
+            .unwrap()
+            .into_iter()
+            .next();
         assert_eq!(candidate, Some(0xBBBBBBBB));
     }
 
@@ -1942,6 +2176,159 @@ mod tests {
             .dashboard_overview(24, MqttFilter::MqttOnly, "TestBot")
             .unwrap();
         assert_eq!(mqtt.messages_in, 1);
+    }
+
+    #[test]
+    fn test_third_party_traceroute_correlation_key_lookup() {
+        // Simulates the key lookup used to correlate a third-party RouteReply with
+        // the RouteRequest session that was previously observed.
+        //
+        // Scenario:
+        //   - ti6W (0x11111111) sends traceroute to arto (0x22222222), request_id=999
+        //   - We observe the RouteRequest → session key: in:11111111:22222222:999
+        //   - We observe the RouteReply (arto→ti6W, data.request_id=999)
+        //     → we try key: in:{to_node=ti6W}:{from_node=arto}:{request_id=999}
+        //     → = in:11111111:22222222:999 → matches!
+        let db = setup_db();
+        let since = chrono::Utc::now().timestamp() - 60;
+
+        let p1 = db
+            .log_packet_with_mesh_id(
+                0x11111111,
+                Some(0x22222222),
+                0,
+                "",
+                "in",
+                false,
+                None,
+                None,
+                Some(1),
+                Some(5),
+                Some(999),
+                "traceroute",
+            )
+            .unwrap();
+
+        // Insert the RouteRequest session
+        let request_key = "in:11111111:22222222:999";
+        db.log_traceroute_observation(
+            p1,
+            request_key,
+            0x11111111,
+            Some(0x22222222),
+            false,
+            Some(1),
+            Some(5),
+            None,
+            None,
+            &[0xaabbccdd],
+            &[],
+        )
+        .unwrap();
+
+        // The reply correlation lookup: in:{initiator=ti6W}:{from=arto}:{request_id=999}
+        let correlation_key = format!("in:{:08x}:{:08x}:{}", 0x11111111u32, 0x22222222u32, 999);
+        assert_eq!(correlation_key, request_key);
+        assert!(db
+            .traceroute_session_exists_since(&correlation_key, since)
+            .unwrap());
+
+        // Old key for the reply (in:{arto}:{ti6W}:{reply_id}) should NOT exist
+        let old_reply_key = "in:22222222:11111111:1234";
+        assert!(!db
+            .traceroute_session_exists_since(old_reply_key, since)
+            .unwrap());
+    }
+
+    #[test]
+    fn test_third_party_traceroute_reply_merges_response_hops() {
+        // Verify that correlating a RouteReply into an existing RouteRequest session
+        // adds response hops without duplicating request hops.
+        let db = setup_db();
+
+        let request_key = "in:11111111:22222222:999";
+
+        let p1 = db
+            .log_packet_with_mesh_id(
+                0x11111111,
+                Some(0x22222222),
+                0,
+                "",
+                "in",
+                false,
+                None,
+                None,
+                Some(1),
+                Some(5),
+                Some(999),
+                "traceroute",
+            )
+            .unwrap();
+        let p2 = db
+            .log_packet_with_mesh_id(
+                0x22222222,
+                Some(0x11111111),
+                0,
+                "",
+                "in",
+                false,
+                None,
+                None,
+                Some(0),
+                Some(2),
+                Some(1000),
+                "traceroute",
+            )
+            .unwrap();
+
+        // Step 1: observe RouteRequest (ti6W → arto), relay node a1ce in route
+        db.log_traceroute_observation(
+            p1,
+            request_key,
+            0x11111111,
+            Some(0x22222222),
+            false,
+            Some(1),
+            Some(5),
+            None,
+            None,
+            &[0xa1ce0000], // request route: one relay
+            &[],
+        )
+        .unwrap();
+
+        // Step 2: correlate RouteReply (arto → ti6W); pass &[] for request route
+        // (already logged above) and route_back as response route.
+        db.log_traceroute_observation(
+            p2,
+            request_key,
+            0x11111111, // obs_src stays as initiator
+            Some(0x22222222),
+            false,
+            Some(1), // req_hops from route.len()
+            None,
+            Some(0), // res_hops from RF metadata
+            Some(2),
+            &[],           // no request hops (already inserted)
+            &[0xa1ce0000], // response route_back
+        )
+        .unwrap();
+
+        // Session uses in: key so capped at partial even with both sides present
+        let sessions = db.dashboard_traceroute_sessions(0, 10).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["status"], "partial");
+        assert_eq!(sessions[0]["sample_count"], 2);
+
+        // Hops: one 'request' hop + one 'response' hop, no duplicates
+        let hops = sessions[0]["hops"].as_array().unwrap();
+        assert_eq!(hops.len(), 2);
+        let directions: Vec<&str> = hops
+            .iter()
+            .map(|h| h["direction"].as_str().unwrap())
+            .collect();
+        assert!(directions.contains(&"request"));
+        assert!(directions.contains(&"response"));
     }
 
     #[test]

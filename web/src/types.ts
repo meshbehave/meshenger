@@ -73,6 +73,35 @@ export interface TracerouteDestinationRow {
   avg_hops: number | null;
 }
 
+export interface TracerouteSessionHop {
+  direction: string;
+  hop_index: number;
+  node_id: string;
+  short_name: string | null;
+  long_name: string | null;
+}
+
+export interface TracerouteSessionRow {
+  id: number;
+  trace_key: string;
+  first_seen: number;
+  last_seen: number;
+  src_node: string;
+  src_short_name: string | null;
+  src_long_name: string | null;
+  dst_node: string | null;
+  dst_short_name: string | null;
+  dst_long_name: string | null;
+  via_mqtt: boolean;
+  request_hops: number | null;
+  request_hop_start: number | null;
+  response_hops: number | null;
+  response_hop_start: number | null;
+  status: string;
+  sample_count: number;
+  hops: TracerouteSessionHop[];
+}
+
 export type MqttFilterValue = "all" | "local" | "mqtt_only";
 
 export type HoursValue = 24 | 72 | 168 | 720 | 2160 | 8760 | 0;

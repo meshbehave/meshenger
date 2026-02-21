@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Severity | Component | Reported | File |
 | --- | --- | --- | --- | --- | --- | --- |
-| ISS-20260217-traceroute-session-parity-outbound-inbound | Achieve full traceroute session parity by correlating outbound probes with inbound responses | in_progress | medium | bot/outgoing+bot/incoming+db+dashboard | 2026-02-17 | `issues/in_progress/ISS-20260217-traceroute-session-parity-outbound-inbound.md` |
+| ISS-20260217-traceroute-session-parity-outbound-inbound | Achieve full traceroute session parity by correlating outbound probes with inbound responses | resolved | medium | bot/outgoing+bot/incoming+db+dashboard | 2026-02-17 | `issues/resolved/ISS-20260217-traceroute-session-parity-outbound-inbound.md` |
 | ISS-20260217-traceroute-probe-cooldown-starvation | Auto traceroute probe can starve other candidates when top candidate is in cooldown | resolved | medium | bot/runtime+db | 2026-02-17 | `issues/resolved/ISS-20260217-traceroute-probe-cooldown-starvation.md` |
 | ISS-20260217-self-node-packet-forensics-tabs | Add self-node packet forensics tabs (sent/reported with packet drilldown) | open | medium | dashboard+db+web | 2026-02-17 | `issues/open/ISS-20260217-self-node-packet-forensics-tabs.md` |
 | ISS-20260217-self-node-reception-matrix | Add self-node reception matrix for packet receive/report visibility | open | medium | dashboard+db+web | 2026-02-17 | `issues/open/ISS-20260217-self-node-reception-matrix.md` |
@@ -15,3 +15,7 @@
 | ISS-20260216-ping-hop-display-denominator | Ping hop display used remaining hops as denominator | resolved | medium | module/ping | 2026-02-16 | `issues/resolved/ISS-20260216-ping-hop-display-denominator.md` |
 | ISS-20260216-script-smoke-test-issue | Script smoke test issue (template validation artifact) | rejected | medium | tooling/issues | 2026-02-16 | `issues/rejected/ISS-20260216-script-smoke-test-issue.md` |
 | ISS-20260217-add-frontend-pagination-for-dashboard-tables | Add frontend pagination for dashboard tables | resolved | medium | dashboard+web | 2026-02-17 | `issues/resolved/ISS-20260217-add-frontend-pagination-for-dashboard-tables.md` |
+| ISS-20260221-enable-sqlite-wal-mode-and-periodic-pragma-optimize | Enable SQLite WAL mode and periodic PRAGMA optimize | resolved | low | db | 2026-02-21 | `issues/resolved/ISS-20260221-enable-sqlite-wal-mode-and-periodic-pragma-optimize.md` |
+| ISS-20260221-log-reconnect-disconnect-events-for-db-growth-observability | Log reconnect/disconnect events for DB growth observability | open | medium | unknown | 2026-02-21 | `issues/open/ISS-20260221-log-reconnect-disconnect-events-for-db-growth-observability.md` |
+| ISS-20260221-track-unique-active-rf-nodes-per-week-month-over-time | Track unique active RF nodes per week/month over time | open | medium | unknown | 2026-02-21 | `issues/open/ISS-20260221-track-unique-active-rf-nodes-per-week-month-over-time.md` |
+| ISS-20260221-prevent-frontend-dashboard-performance-degradation-as-db-grows | Prevent frontend dashboard performance degradation as DB grows | open | medium | unknown | 2026-02-21 | `issues/open/ISS-20260221-prevent-frontend-dashboard-performance-degradation-as-db-grows.md` |

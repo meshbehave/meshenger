@@ -1,5 +1,6 @@
 use crate::bridge::{MeshBridgeMessage, OutgoingBridgeMessage};
 use crate::message::{MeshEvent, MessageContext};
+use chrono::Utc;
 use meshtastic::packet::PacketDestination;
 use meshtastic::protobufs::{self, from_radio, mesh_packet};
 use meshtastic::types::MeshChannel;
@@ -9,14 +10,9 @@ use super::*;
 impl Bot {
     fn decode_traceroute_routes(data: &protobufs::Data) -> (Vec<u32>, Vec<u32>) {
         match meshtastic::Message::decode(data.payload.as_slice()) {
-            Ok(routing) => {
-                let routing: protobufs::Routing = routing;
-                match routing.variant {
-                    Some(protobufs::routing::Variant::RouteRequest(route)) => {
-                        (route.route, route.route_back)
-                    }
-                    _ => (Vec::new(), Vec::new()),
-                }
+            Ok(route_disc) => {
+                let route_disc: protobufs::RouteDiscovery = route_disc;
+                (route_disc.route, route_disc.route_back)
             }
             Err(_) => (Vec::new(), Vec::new()),
         }
@@ -211,18 +207,103 @@ impl Bot {
                     hop_start,
                     "traceroute",
                 ) {
-                    let trace_key = Self::traceroute_trace_key(mesh_packet);
+                    // Attempt to correlate this packet with an existing traceroute session.
+                    // data.request_id echoes the original request's MeshPacket.id.
+                    //
+                    // Two cases:
+                    //   1. Reply to our outgoing probe (to_node == us):
+                    //      look for req:{us}:{responder}:{request_id}
+                    //   2. Reply to a third-party request (to_node == someone else):
+                    //      look for in:{initiator}:{responder}:{request_id}
+                    //      (reversed from/to because reply travels opposite direction)
+                    //
+                    // correlated: Option<(session_key, obs_src, is_third_party)>
+                    let correlated: Option<(String, u32, bool)> = if data.request_id != 0 {
+                        let since = Utc::now().timestamp() - 300; // 5-minute window
+                        if to_node == Some(my_node_id) {
+                            let candidate = format!(
+                                "req:{:08x}:{:08x}:{}",
+                                my_node_id, mesh_packet.from, data.request_id
+                            );
+                            if self
+                                .db
+                                .traceroute_session_exists_since(&candidate, since)
+                                .unwrap_or(false)
+                            {
+                                Some((candidate, my_node_id, false))
+                            } else {
+                                None
+                            }
+                        } else if let Some(initiator) = to_node {
+                            let candidate = format!(
+                                "in:{:08x}:{:08x}:{}",
+                                initiator, mesh_packet.from, data.request_id
+                            );
+                            if self
+                                .db
+                                .traceroute_session_exists_since(&candidate, since)
+                                .unwrap_or(false)
+                            {
+                                Some((candidate, initiator, true))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let is_third_party_reply =
+                        correlated.as_ref().map(|(_, _, tp)| *tp).unwrap_or(false);
+
+                    // Derive session fields from correlation result.
+                    // For a correlated reply: preserve request direction (src=initiator, dst=responder).
+                    // For all other packets: use the packet's own src/dst.
+                    let (trace_key, obs_src, obs_dst, req_hops, req_start, res_hops, res_start) =
+                        if let Some((key, src, _)) = correlated {
+                            (
+                                key,
+                                src,
+                                Some(mesh_packet.from),
+                                Some(request_route.len() as u32),
+                                None,
+                                hop_count,
+                                hop_start,
+                            )
+                        } else {
+                            (
+                                Self::traceroute_trace_key(mesh_packet),
+                                mesh_packet.from,
+                                to_node,
+                                hop_count,
+                                hop_start,
+                                None,
+                                None,
+                            )
+                        };
+
+                    // For third-party correlated replies, the request hops were already
+                    // inserted when the RouteRequest was first observed; only add the
+                    // response path (route_back) to avoid duplicate hop rows.
+                    let req_route_for_log: &[u32] = if is_third_party_reply {
+                        &[]
+                    } else {
+                        &request_route
+                    };
+
                     let _ = self.db.log_traceroute_observation(
                         packet_row_id,
                         &trace_key,
-                        mesh_packet.from,
-                        to_node,
+                        obs_src,
+                        obs_dst,
                         mesh_packet.via_mqtt,
-                        hop_count,
-                        hop_start,
-                        None,
-                        None,
-                        &request_route,
+                        req_hops,
+                        req_start,
+                        res_hops,
+                        res_start,
+                        req_route_for_log,
                         &response_route,
                     );
                 }

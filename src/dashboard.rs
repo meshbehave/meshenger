@@ -119,6 +119,7 @@ impl Dashboard {
                 "/api/traceroute-destinations",
                 get(handle_traceroute_destinations),
             )
+            .route("/api/traceroute-sessions", get(handle_traceroute_sessions))
             .route("/api/positions", get(handle_positions))
             .route("/api/queue", get(handle_queue))
             .route("/api/events", get(handle_sse));
@@ -299,6 +300,20 @@ async fn handle_traceroute_destinations(
         .dashboard_traceroute_destinations(params.hours, filter)
         .map_err(|e| {
             log::error!("Dashboard traceroute destinations error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    to_json(rows)
+}
+
+async fn handle_traceroute_sessions(
+    State(state): State<AppState>,
+    Query(params): Query<HoursParam>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let rows = state
+        .db
+        .dashboard_traceroute_sessions(params.hours, 300)
+        .map_err(|e| {
+            log::error!("Dashboard traceroute sessions error: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     to_json(rows)

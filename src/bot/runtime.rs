@@ -177,6 +177,7 @@ impl Bot {
         let send_delay = std::time::Duration::from_millis(self.config.bot.send_delay_ms);
         let send_timer = tokio::time::sleep(send_delay);
         tokio::pin!(send_timer);
+
         let traceroute_enabled = self.config.traceroute_probe.enabled;
         let traceroute_base_interval =
             std::time::Duration::from_secs(self.config.traceroute_probe.interval_secs.max(60));
@@ -187,124 +188,86 @@ impl Bot {
             traceroute_jitter_pct,
         ));
         tokio::pin!(traceroute_timer);
+
         let stale_node_max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60);
         let stale_node_purge_interval = std::time::Duration::from_secs(60 * 60);
         let stale_node_purge_timer = tokio::time::sleep(stale_node_purge_interval);
         tokio::pin!(stale_node_purge_timer);
 
+        // PRAGMA optimize: run every 6 hours to keep query planner stats fresh.
+        let optimize_interval = std::time::Duration::from_secs(6 * 60 * 60);
+        let optimize_timer = tokio::time::sleep(optimize_interval);
+        tokio::pin!(optimize_timer);
+
         self.purge_stale_nodes(stale_node_max_age);
 
-        // Track bridge receiver availability; disable bridge polling once channel closes.
-        let mut bridge_rx = self.bridge.rx();
+        // Bridge active flag: set to false when the bridge channel closes.
+        let mut bridge_active = self.bridge.rx().is_some();
 
         loop {
-            // Check if the outgoing queue has messages to send
             let queue_has_messages = !self.outgoing.is_empty();
 
-            // If we have a bridge receiver, use select to handle both
-            if let Some(rx_mutex) = bridge_rx {
-                let mut disable_bridge = false;
-                let mut rx_guard = rx_mutex.lock().await;
-                tokio::select! {
-                    // Handle packets from mesh
-                    packet = packet_rx.recv() => {
-                        match packet {
-                            Some(p) => {
-                                drop(rx_guard); // Release lock before processing
-                                self.process_radio_packet(my_node_id, p).await;
-                            }
-                            None => {
-                                log::warn!("Packet channel closed, exiting event loop");
-                                return Ok(());
-                            }
+            tokio::select! {
+                // Handle messages from bridges; disabled when no bridge or after channel close.
+                // The async block acquires the lock only for the duration of recv(), so it is
+                // dropped (not held) when any other branch wins the select.
+                msg = async { self.bridge.rx().unwrap().lock().await.recv().await },
+                    if bridge_active =>
+                {
+                    match msg {
+                        Some(msg) => self.handle_bridge_message(my_node_id, msg),
+                        None => {
+                            bridge_active = false;
+                            log::warn!("Bridge outgoing channel closed; disabling bridge receive path");
                         }
-                    }
-                    // Handle messages from bridges
-                    bridge_msg = rx_guard.recv() => {
-                        match bridge_msg {
-                            Some(msg) => {
-                                drop(rx_guard); // Release lock before processing
-                                self.handle_bridge_message(my_node_id, msg);
-                            }
-                            None => {
-                                drop(rx_guard);
-                                disable_bridge = true;
-                                log::warn!("Bridge outgoing channel closed; disabling bridge receive path");
-                            }
-                        }
-                    }
-                    // Dispatch deferred events after grace period
-                    _ = &mut grace_timer, if !grace_period_done => {
-                        drop(rx_guard);
-                        grace_period_done = true;
-                        self.dispatch_deferred_events(my_node_id).await;
-                    }
-                    // Drain outgoing queue
-                    _ = &mut send_timer, if queue_has_messages => {
-                        drop(rx_guard);
-                        self.send_next_queued_message(&mut api, router).await;
-                        self.notify_dashboard();
-                        send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
-                    }
-                    _ = &mut traceroute_timer, if traceroute_enabled => {
-                        drop(rx_guard);
-                        self.maybe_queue_traceroute_probe(my_node_id);
-                        traceroute_timer.as_mut().reset(
-                            tokio::time::Instant::now()
-                                + next_traceroute_interval(
-                                    traceroute_base_interval,
-                                    traceroute_jitter_pct,
-                                ),
-                        );
-                    }
-                    _ = &mut stale_node_purge_timer => {
-                        drop(rx_guard);
-                        self.purge_stale_nodes(stale_node_max_age);
-                        stale_node_purge_timer.as_mut().reset(tokio::time::Instant::now() + stale_node_purge_interval);
                     }
                 }
-                if disable_bridge {
-                    bridge_rx = None;
-                }
-            } else {
-                // No bridges, just handle mesh packets
-                tokio::select! {
-                    packet = packet_rx.recv() => {
-                        match packet {
-                            Some(packet) => {
-                                self.process_radio_packet(my_node_id, packet).await;
-                            }
-                            None => {
-                                log::warn!("Packet channel closed, exiting event loop");
-                                return Ok(());
-                            }
+
+                // Handle packets from mesh
+                packet = packet_rx.recv() => {
+                    match packet {
+                        Some(p) => self.process_radio_packet(my_node_id, p).await,
+                        None => {
+                            log::warn!("Packet channel closed, exiting event loop");
+                            return Ok(());
                         }
                     }
-                    // Dispatch deferred events after grace period
-                    _ = &mut grace_timer, if !grace_period_done => {
-                        grace_period_done = true;
-                        self.dispatch_deferred_events(my_node_id).await;
+                }
+
+                // Dispatch deferred events after grace period
+                _ = &mut grace_timer, if !grace_period_done => {
+                    grace_period_done = true;
+                    self.dispatch_deferred_events(my_node_id).await;
+                }
+
+                // Drain outgoing message queue
+                _ = &mut send_timer, if queue_has_messages => {
+                    self.send_next_queued_message(&mut api, router).await;
+                    self.notify_dashboard();
+                    send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
+                }
+
+                // Periodic traceroute probe
+                _ = &mut traceroute_timer, if traceroute_enabled => {
+                    self.maybe_queue_traceroute_probe(my_node_id);
+                    traceroute_timer.as_mut().reset(
+                        tokio::time::Instant::now()
+                            + next_traceroute_interval(traceroute_base_interval, traceroute_jitter_pct),
+                    );
+                }
+
+                // Periodic stale node purge
+                _ = &mut stale_node_purge_timer => {
+                    self.purge_stale_nodes(stale_node_max_age);
+                    stale_node_purge_timer.as_mut().reset(tokio::time::Instant::now() + stale_node_purge_interval);
+                }
+
+                // Periodic PRAGMA optimize
+                _ = &mut optimize_timer => {
+                    if let Err(e) = self.db.optimize() {
+                        log::warn!("PRAGMA optimize failed: {}", e);
                     }
-                    // Drain outgoing queue
-                    _ = &mut send_timer, if queue_has_messages => {
-                        self.send_next_queued_message(&mut api, router).await;
-                        self.notify_dashboard();
-                        send_timer.as_mut().reset(tokio::time::Instant::now() + send_delay);
-                    }
-                    _ = &mut traceroute_timer, if traceroute_enabled => {
-                        self.maybe_queue_traceroute_probe(my_node_id);
-                        traceroute_timer.as_mut().reset(
-                            tokio::time::Instant::now()
-                                + next_traceroute_interval(
-                                    traceroute_base_interval,
-                                    traceroute_jitter_pct,
-                                ),
-                        );
-                    }
-                    _ = &mut stale_node_purge_timer => {
-                        self.purge_stale_nodes(stale_node_max_age);
-                        stale_node_purge_timer.as_mut().reset(tokio::time::Instant::now() + stale_node_purge_interval);
-                    }
+                    optimize_timer.as_mut().reset(tokio::time::Instant::now() + optimize_interval);
                 }
             }
         }
